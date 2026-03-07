@@ -4,15 +4,18 @@ from fastapi import Depends, Header
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.services.offer_service import OfferService
 from app.application.services.scraping_job_service import ScrapingJobService
 from app.application.services.user_service import UserService
 from app.domain.models.current_user import CurrentUser
+from app.domain.repositories.i_offer_repository import IOfferRepository
 from app.domain.repositories.i_scraping_job_repository import IScrapingJobRepository
 from app.domain.repositories.i_user_repository import IUserRepository
 from app.infrastructure.auth.auth0_jwt_verifier import verify_token
 from app.infrastructure.aws.sfn_client import SfnStarterClient
 from app.infrastructure.database.session import get_db_session
 from app.infrastructure.errors.app_error import AppError
+from app.infrastructure.repositories.offer_repository import OfferRepository
 from app.infrastructure.repositories.scraping_job_repository import ScrapingJobRepository
 from app.infrastructure.repositories.user_repository import UserRepository
 
@@ -64,3 +67,15 @@ def get_scraping_job_service(
 
 def get_sfn_client() -> SfnStarterClient:
     return SfnStarterClient()
+
+
+def get_offer_repository(
+    session: AsyncSession = Depends(get_db_session),
+) -> IOfferRepository:
+    return OfferRepository(session)
+
+
+def get_offer_service(
+    repository: IOfferRepository = Depends(get_offer_repository),
+) -> OfferService:
+    return OfferService(repository)
