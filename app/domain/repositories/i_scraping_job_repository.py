@@ -14,3 +14,8 @@ class IScrapingJobRepository(ABC):
 
     @abstractmethod
     async def find_all(self, status: str | None = None) -> list[ScrapingJob]: ...
+
+    @abstractmethod
+    async def update(self, job: ScrapingJob) -> None:
+        """Persist updated fields of an existing scraping job (status, records_scraped, etc.)."""
+        ...

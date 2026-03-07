@@ -12,6 +12,7 @@ dependencies = [
     "PyJWT>=2.8.0",
     "cryptography>=42.0.0",
     "python-dotenv>=1.0.0",
+    "googlemaps>=4.10.0",
 ]
 
 [tool.uv]
@@ -34,6 +35,10 @@ testpaths = ["tests"]
 strict = true
 python_version = "3.12"
 
+[[tool.mypy.overrides]]
+module = "googlemaps"
+ignore_missing_imports = true
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"
@@ -43,6 +48,8 @@ select = ["E", "F", "I", "UP"]
 
 [tool.ruff.lint.per-file-ignores]
 "main.py" = ["E402"]
+"alembic/env.py" = ["E402"]
+"alembic/versions/*.py" = ["E501"]
 
 [tool.coverage.run]
 omit = ["app/infrastructure/database/session.py"]

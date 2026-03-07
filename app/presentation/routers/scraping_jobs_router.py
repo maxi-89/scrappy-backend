@@ -1,7 +1,12 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends
 
 from app.application.services.scraping_job_service import ScrapingJobService
-from app.infrastructure.dependencies import get_admin_key, get_scraping_job_service
+from app.application.workers.scraping_worker import ScrapingWorker
+from app.infrastructure.dependencies import (
+    get_admin_key,
+    get_scraping_job_service,
+    get_scraping_worker,
+)
 from app.infrastructure.errors.app_error import AppError
 from app.presentation.schemas.scraping_job_schemas import (
     CreateScrapingJobRequest,
@@ -14,10 +19,14 @@ router = APIRouter()
 @router.post("", response_model=ScrapingJobResponse, status_code=202)
 async def create_scraping_job(
     payload: CreateScrapingJobRequest,
+    background_tasks: BackgroundTasks,
     _: str = Depends(get_admin_key),
     service: ScrapingJobService = Depends(get_scraping_job_service),
+    worker: ScrapingWorker = Depends(get_scraping_worker),
 ) -> ScrapingJobResponse:
-    return await service.create_job(payload)
+    response = await service.create_job(payload)
+    background_tasks.add_task(worker.run_by_id, response.id)
+    return response
 
 
 @router.get("", response_model=list[ScrapingJobResponse])
