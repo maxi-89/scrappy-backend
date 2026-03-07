@@ -41,12 +41,12 @@ Raw scraped business records obtained from Google Maps.
 
 Tracks background scraping tasks. Jobs can be created in two ways:
 - **Admin-triggered** (`POST /admin/scraping-jobs`): `order_id` is NULL
-- **Order-triggered** (future, SCRUM-19): `order_id` references the paid order
+- **Order-triggered** (SCRUM-19): `order_id` references the paid order that triggered this scrape
 
 | Column | Type | Constraints | Description |
 |---|---|---|---|
 | `id` | `uuid` | PK, default `gen_random_uuid()` | Job ID |
-| `order_id` | `text` | nullable | Associated order (NULL for admin-triggered jobs). FK to `orders.id` added in future migration. |
+| `order_id` | `uuid` | nullable, FK → `orders.id` ON DELETE SET NULL | Associated order (NULL for admin-triggered jobs) |
 | `category` | `text` | NOT NULL | Target category to scrape |
 | `zone` | `text` | NOT NULL | Target geographic zone |
 | `status` | `text` | NOT NULL | `pending` \| `running` \| `completed` \| `failed` |
@@ -56,42 +56,44 @@ Tracks background scraping tasks. Jobs can be created in two ways:
 | `finished_at` | `timestamptz` | | When job completed or failed |
 | `created_at` | `timestamptz` | NOT NULL, default `now()` | Job creation time |
 
-**Indexes**: `status`
+**Indexes**: `status`, `order_id`
 
 ---
 
-### `datasets`
+### `offers`
 
-Curated, purchasable collections of business records.
+Scraping service offerings available for purchase. Each offer represents a business category
+that users can order for a specific zone. The price is determined by the target zone via the
+`pricing` table.
 
 | Column | Type | Constraints | Description |
 |---|---|---|---|
-| `id` | `uuid` | PK, default `gen_random_uuid()` | Dataset ID |
-| `title` | `text` | NOT NULL | Display title (e.g. `"Restaurants CABA 2025"`) |
+| `id` | `uuid` | PK, default `gen_random_uuid()` | Offer ID |
+| `title` | `text` | NOT NULL | Display title (e.g. `"Restaurants"`) |
+| `category` | `text` | NOT NULL, UNIQUE | Scraping category slug (e.g. `restaurants`) |
 | `description` | `text` | | Markdown description shown to buyers |
-| `category` | `text` | NOT NULL | Primary business category |
-| `zone` | `text` | NOT NULL | Primary geographic zone |
-| `record_count` | `integer` | NOT NULL, default 0 | Number of business records included |
-| `price_usd` | `numeric(10,2)` | NOT NULL | Sale price in USD |
-| `is_published` | `boolean` | NOT NULL, default false | Visible to buyers only when true |
-| `sample_data` | `jsonb` | | Up to 5 sample records for preview |
+| `is_active` | `boolean` | NOT NULL, default false | Visible to buyers only when true |
 | `created_at` | `timestamptz` | NOT NULL, default `now()` | Creation timestamp |
 | `updated_at` | `timestamptz` | NOT NULL, default `now()` | Last update timestamp |
 
-**Indexes**: `category`, `zone`, `is_published`
+**Indexes**: `is_active`, `category`
 
 ---
 
-### `dataset_businesses`
+### `pricing`
 
-Join table linking datasets to business records (many-to-many).
+Zone-based pricing configuration. Defines the price (in USD) for a scraping order targeting
+a specific province or city. Managed by the admin via `PUT /admin/pricing`.
 
 | Column | Type | Constraints | Description |
 |---|---|---|---|
-| `dataset_id` | `uuid` | FK → `datasets.id` ON DELETE CASCADE | Dataset reference |
-| `business_id` | `uuid` | FK → `businesses.id` ON DELETE CASCADE | Business reference |
+| `id` | `uuid` | PK, default `gen_random_uuid()` | Pricing entry ID |
+| `zone` | `text` | NOT NULL, UNIQUE | Province or city name (e.g. `CABA`, `Buenos Aires`) |
+| `price_usd` | `numeric(10,2)` | NOT NULL | Price per order for this zone |
+| `created_at` | `timestamptz` | NOT NULL, default `now()` | Creation timestamp |
+| `updated_at` | `timestamptz` | NOT NULL, default `now()` | Last update timestamp |
 
-**Primary key**: `(dataset_id, business_id)`
+**Indexes**: `zone`
 
 ---
 
@@ -116,51 +118,40 @@ Registered buyers.
 
 ### `orders`
 
-Purchase records for datasets.
+On-demand scraping purchase records. Each order represents a user purchasing a scraping job
+for a specific offer (category) and zone. The scraping is triggered after payment confirmation
+via the Stripe webhook, and the result is delivered by email and available for download.
 
 | Column | Type | Constraints | Description |
 |---|---|---|---|
 | `id` | `uuid` | PK, default `gen_random_uuid()` | Order ID |
 | `user_id` | `uuid` | NOT NULL, FK → `users.id` | Buyer |
-| `status` | `text` | NOT NULL | `pending` \| `paid` \| `failed` \| `refunded` |
-| `total_usd` | `numeric(10,2)` | NOT NULL | Total amount charged |
+| `offer_id` | `uuid` | NOT NULL, FK → `offers.id` | Offer purchased |
+| `zone` | `text` | NOT NULL | Target geographic zone for scraping |
+| `format` | `text` | NOT NULL | Requested output format: `csv` \| `excel` \| `json` |
+| `status` | `text` | NOT NULL | `pending` \| `paid` \| `scraping` \| `completed` \| `failed` \| `refunded` |
+| `total_usd` | `numeric(10,2)` | NOT NULL | Amount charged (price snapshot at purchase time) |
 | `stripe_payment_intent_id` | `text` | UNIQUE | Stripe payment reference |
+| `scraping_job_id` | `uuid` | nullable, FK → `scraping_jobs.id` ON DELETE SET NULL | Scraping job triggered after payment |
+| `result_path` | `text` | | Storage path of the result file (set when scraping completes) |
 | `created_at` | `timestamptz` | NOT NULL, default `now()` | Order creation time |
 | `paid_at` | `timestamptz` | | Payment confirmation time |
+| `completed_at` | `timestamptz` | | When result was ready |
 
-**Indexes**: `user_id`, `status`
-
----
-
-### `order_items`
-
-Datasets included in an order (one order can have multiple datasets).
-
-| Column | Type | Constraints | Description |
-|---|---|---|---|
-| `id` | `uuid` | PK, default `gen_random_uuid()` | Item ID |
-| `order_id` | `uuid` | NOT NULL, FK → `orders.id` ON DELETE CASCADE | Parent order |
-| `dataset_id` | `uuid` | NOT NULL, FK → `datasets.id` | Dataset purchased |
-| `price_usd` | `numeric(10,2)` | NOT NULL | Price at time of purchase (snapshot) |
-| `download_token` | `text` | UNIQUE | Secure one-time download token |
-| `downloaded_at` | `timestamptz` | | When buyer first downloaded |
-
-**Indexes**: `order_id`, `download_token`
+**Indexes**: `user_id`, `status`, `scraping_job_id`
 
 ---
 
 ## Entity Relationships
 
 ```
-scraping_jobs ──────────────────────────────────── businesses
-                                                         │
-                                          dataset_businesses ────► datasets
-                                              │
-                                         order_items
-                                              │
-                                           orders
-                                              │
-                                           users
+        offers ──────────────────────────────── orders
+                                                  │
+        pricing (zone → price_usd)                │
+                                               users
+scraping_jobs ◄────────────────────────────── orders
+     │
+  businesses
 ```
 
 ---
@@ -169,14 +160,15 @@ scraping_jobs ──────────────────────
 
 | Pattern | Table | Filter |
 |---|---|---|
-| List published datasets by category | `datasets` | `is_published = true AND category = ?` |
-| List datasets by zone | `datasets` | `is_published = true AND zone = ?` |
-| Get dataset with sample data | `datasets` | `id = ?` |
-| Get all businesses in a dataset | `dataset_businesses JOIN businesses` | `dataset_id = ?` |
+| List active offers | `offers` | `is_active = true` |
+| Get offer detail | `offers` | `id = ?` |
+| Get price for a zone | `pricing` | `zone = ?` |
+| List all zone prices | `pricing` | — |
 | Get orders for a user | `orders` | `user_id = ?` |
-| Get items in an order | `order_items` | `order_id = ?` |
-| Validate download token | `order_items` | `download_token = ?` |
+| Get order with job status | `orders JOIN scraping_jobs` | `orders.id = ?` |
+| Get order by Stripe intent | `orders` | `stripe_payment_intent_id = ?` |
 | List businesses by category+zone | `businesses` | `category = ? AND zone = ?` |
+| Get job triggered by order | `scraping_jobs` | `order_id = ?` |
 
 ---
 
@@ -189,5 +181,4 @@ scraping_jobs ──────────────────────
 - Prices stored as `numeric(10,2)` — never float in financial columns
 - Status fields use `text` with application-level enum validation (not PG enums, for easier migration)
 - Foreign keys always define explicit `ON DELETE` behavior
-- `sample_data` stored as `jsonb` to avoid separate query for previews
-- Download tokens generated as cryptographically secure random strings (32 bytes, hex-encoded)
+- Result files stored in object storage (S3/Supabase Storage); `result_path` holds the key/path
