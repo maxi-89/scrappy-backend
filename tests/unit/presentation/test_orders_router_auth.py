@@ -1,13 +1,19 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.domain.models.current_user import CurrentUser
-from app.infrastructure.dependencies import get_current_user
+from app.infrastructure.dependencies import get_current_user, get_user_service
 from main import app
 
 _VALID_USER = CurrentUser(sub="auth0|123", email="u@test.com")
+
+
+def _mock_user_service() -> MagicMock:
+    svc = MagicMock()
+    svc.sync_user = AsyncMock(return_value=None)
+    return svc
 
 
 @pytest.fixture(autouse=True)
@@ -68,6 +74,7 @@ async def test_download_dataset_returns_401_when_no_authorization_header() -> No
 
 async def test_get_orders_returns_401_when_token_is_invalid() -> None:
     # Arrange
+    app.dependency_overrides[get_user_service] = _mock_user_service
     with (
         patch("app.infrastructure.auth.auth0_jwt_verifier._get_jwks_client") as mock_client,
         patch("app.infrastructure.auth.auth0_jwt_verifier.jwt.decode") as mock_decode,
@@ -90,6 +97,7 @@ async def test_get_orders_returns_401_when_token_is_invalid() -> None:
 
 async def test_get_orders_returns_401_when_token_is_expired() -> None:
     # Arrange
+    app.dependency_overrides[get_user_service] = _mock_user_service
     with (
         patch("app.infrastructure.auth.auth0_jwt_verifier._get_jwks_client") as mock_client,
         patch("app.infrastructure.auth.auth0_jwt_verifier.jwt.decode") as mock_decode,
