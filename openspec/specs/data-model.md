@@ -17,6 +17,7 @@ Raw scraped business records obtained from Google Maps.
 | Column | Type | Constraints | Description |
 |---|---|---|---|
 | `id` | `uuid` | PK, default `gen_random_uuid()` | Unique business record ID |
+| `scraping_job_id` | `uuid` | NOT NULL, FK → `scraping_jobs.id` ON DELETE CASCADE | Job that produced this record |
 | `name` | `text` | NOT NULL | Business name |
 | `category` | `text` | NOT NULL | Business category (e.g. `restaurants`, `clinics`) |
 | `zone` | `text` | NOT NULL | Geographic zone (e.g. `CABA`, `Palermo`) |
@@ -26,11 +27,13 @@ Raw scraped business records obtained from Google Maps.
 | `google_maps_url` | `text` | | Google Maps listing URL |
 | `rating` | `numeric(2,1)` | | Rating 0.0–5.0 |
 | `review_count` | `integer` | default 0 | Number of Google reviews |
+| `latitude` | `numeric(10,7)` | | GPS latitude |
+| `longitude` | `numeric(10,7)` | | GPS longitude |
 | `is_verified` | `boolean` | default false | Data quality flag |
 | `scraped_at` | `timestamptz` | NOT NULL | When the record was scraped |
 | `created_at` | `timestamptz` | NOT NULL, default `now()` | Record creation time |
 
-**Indexes**: `category`, `zone`, `(category, zone)`
+**Indexes**: `scraping_job_id`, `category`, `zone`, `(category, zone)`
 
 ---
 
@@ -149,9 +152,9 @@ Datasets included in an order (one order can have multiple datasets).
 ## Entity Relationships
 
 ```
-scraping_jobs ──────────────────────────────────── (independent)
-
-businesses ◄──── dataset_businesses ────► datasets
+scraping_jobs ──────────────────────────────────── businesses
+                                                         │
+                                          dataset_businesses ────► datasets
                                               │
                                          order_items
                                               │

@@ -6,16 +6,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.services.scraping_job_service import ScrapingJobService
 from app.application.services.user_service import UserService
+from app.application.workers.scraping_worker import ScrapingWorker
 from app.domain.models.current_user import CurrentUser
 from app.domain.repositories.i_scraping_job_repository import IScrapingJobRepository
 from app.domain.repositories.i_user_repository import IUserRepository
 from app.infrastructure.auth.auth0_jwt_verifier import verify_token
-from app.infrastructure.database.session import get_db_session
+from app.infrastructure.database.session import AsyncSessionLocal, get_db_session
 from app.infrastructure.errors.app_error import AppError
 from app.infrastructure.repositories.scraping_job_repository import ScrapingJobRepository
 from app.infrastructure.repositories.user_repository import UserRepository
 
 _ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "")
+_GOOGLE_MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -59,3 +61,10 @@ def get_scraping_job_service(
     repository: IScrapingJobRepository = Depends(get_scraping_job_repository),
 ) -> ScrapingJobService:
     return ScrapingJobService(repository)
+
+
+def get_scraping_worker() -> ScrapingWorker:
+    return ScrapingWorker(
+        session_factory=AsyncSessionLocal,
+        google_maps_api_key=_GOOGLE_MAPS_API_KEY,
+    )

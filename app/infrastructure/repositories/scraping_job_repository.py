@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from sqlalchemy import select
+from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.models.scraping_job import ScrapingJob
@@ -41,6 +42,21 @@ class ScrapingJobRepository(IScrapingJobRepository):
             stmt = stmt.where(ScrapingJobORM.status == status)
         result = await self._session.execute(stmt)
         return [self._map_to_domain(row) for row in result.scalars().all()]
+
+    async def update(self, job: ScrapingJob) -> None:
+        stmt = (
+            sa_update(ScrapingJobORM)
+            .where(ScrapingJobORM.id == job.id)
+            .values(
+                status=job.status,
+                records_scraped=job.records_scraped,
+                error_message=job.error_message,
+                started_at=job.started_at,
+                finished_at=job.finished_at,
+            )
+        )
+        await self._session.execute(stmt)
+        await self._session.commit()
 
     def _map_to_domain(self, row: ScrapingJobORM) -> ScrapingJob:
         return ScrapingJob(
