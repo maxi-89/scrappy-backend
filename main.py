@@ -4,7 +4,7 @@ from mangum import Mangum
 
 from app.infrastructure.errors.app_error import AppError
 from app.infrastructure.errors.domain_validation_error import DomainValidationError
-from app.presentation.routers import orders_router
+from app.presentation.routers import orders_router, scraping_jobs_router
 
 app = FastAPI(title="Scrappy API", version="1.0.0")
 
@@ -22,6 +22,11 @@ async def domain_validation_error_handler(
 
 
 app.include_router(orders_router.router, prefix="/orders", tags=["orders"])
+app.include_router(
+    scraping_jobs_router.router,
+    prefix="/admin/scraping-jobs",
+    tags=["admin"],
+)
 
 # AWS Lambda handler
 handler = Mangum(app, lifespan="off")

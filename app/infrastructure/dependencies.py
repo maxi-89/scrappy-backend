@@ -1,14 +1,21 @@
-from fastapi import Depends
+import os
+
+from fastapi import Depends, Header
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.services.scraping_job_service import ScrapingJobService
 from app.application.services.user_service import UserService
 from app.domain.models.current_user import CurrentUser
+from app.domain.repositories.i_scraping_job_repository import IScrapingJobRepository
 from app.domain.repositories.i_user_repository import IUserRepository
 from app.infrastructure.auth.auth0_jwt_verifier import verify_token
 from app.infrastructure.database.session import get_db_session
 from app.infrastructure.errors.app_error import AppError
+from app.infrastructure.repositories.scraping_job_repository import ScrapingJobRepository
 from app.infrastructure.repositories.user_repository import UserRepository
+
+_ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "")
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -34,3 +41,21 @@ async def get_current_user(
     current_user = verify_token(credentials.credentials)
     await user_service.sync_user(current_user)
     return current_user
+
+
+def get_admin_key(x_admin_key: str = Header(...)) -> str:
+    if not _ADMIN_API_KEY or x_admin_key != _ADMIN_API_KEY:
+        raise AppError("Invalid or missing admin key", status_code=401)
+    return x_admin_key
+
+
+def get_scraping_job_repository(
+    session: AsyncSession = Depends(get_db_session),
+) -> IScrapingJobRepository:
+    return ScrapingJobRepository(session)
+
+
+def get_scraping_job_service(
+    repository: IScrapingJobRepository = Depends(get_scraping_job_repository),
+) -> ScrapingJobService:
+    return ScrapingJobService(repository)
