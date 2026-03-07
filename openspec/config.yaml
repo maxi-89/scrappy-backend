@@ -1,0 +1,73 @@
+schema: spec-driven
+
+confluence:
+  cloudId: 29831451-8cf6-4985-a05b-ffc4782497d4
+  spaceId: "98307"
+  spaceKey: TWC
+  pages:
+    engineeringHub: "622594"
+    standards: "655361"
+    services: "688129"
+    backendStandards: "720898"
+    frontendStandards: "753665"
+    documentationGuidelines: "720918"
+  services:
+    scrappy:
+      root: TBD         # Create under services (688129) when first doc is published
+      overview: TBD
+      apiReference: TBD
+      dataModel: TBD
+      architecture: TBD
+      changelog: TBD
+
+context: |
+  ## Product
+  Scrappy — business data marketplace. Scrapes Google Maps businesses,
+  normalizes them, and sells curated datasets by category and geographic zone.
+
+  ## Backend Stack
+  - Runtime: Python 3.12
+  - Framework: FastAPI
+  - ASGI Adapter: Mangum (AWS Lambda)
+  - Database: Supabase (PostgreSQL via SQLAlchemy 2.0 async + asyncpg)
+  - Validation: Pydantic v2
+  - Testing: pytest + pytest-asyncio (90% coverage threshold)
+  - Linting: ruff + mypy (strict)
+  - Dependency management: uv (pyproject.toml)
+
+  ## Frontend Stack
+  - Framework: Next.js (App Router)
+  - Language: TypeScript (strict mode)
+  - Styling: Tailwind CSS
+  - Testing: Jest + React Testing Library / Playwright for E2E
+
+  ## Infrastructure
+  - Frontend: Vercel
+  - Backend: AWS Lambda (via Mangum) + API Gateway
+  - Database: Supabase (managed PostgreSQL)
+  - Auth: Auth0 (JWT Bearer)
+  - Payments: Stripe
+
+  ## Architecture
+  - Backend follows Domain-Driven Design (DDD) with layered architecture:
+    Domain → Application → Infrastructure → Presentation (FastAPI routers)
+  - Relational PostgreSQL design (Supabase) — no single-table NoSQL
+  - REST API exposed via FastAPI (OpenAPI spec auto-generated)
+  - Frontend uses Next.js App Router with Server and Client Components
+
+  ## Conventions
+  - All code, docs, commits, and test names in English
+  - Conventional commits (feat, fix, docs, refactor, test, chore)
+  - TDD: write failing tests first
+  - Small, incremental changes — one task at a time
+  - Full strict typing throughout (mypy for Python, TypeScript strict for frontend)
+
+rules:
+  proposal:
+    - Keep proposals focused on one feature or concern
+    - Always include a "Non-goals" section
+    - Identify which stack (backend/frontend/both) is affected
+  tasks:
+    - Break tasks into steps of max 2 hours
+    - Each task must reference affected files
+    - First task is always: write failing tests

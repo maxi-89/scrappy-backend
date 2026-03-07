@@ -1,0 +1,521 @@
+---
+description: Frontend development standards, best practices, and conventions for Next.js applications with TypeScript, Tailwind CSS, and App Router architecture.
+globs: ["app/**/*.{ts,tsx}", "components/**/*.{ts,tsx}", "lib/**/*.ts", "hooks/**/*.ts", "tailwind.config.ts", "next.config.ts", "tsconfig.json", "package.json"]
+alwaysApply: true
+---
+
+# Frontend Standards — Next.js · TypeScript · Tailwind CSS
+
+## Table of Contents
+
+- [Technology Stack](#technology-stack)
+- [Architecture Overview](#architecture-overview)
+- [Project Structure](#project-structure)
+- [App Router Conventions](#app-router-conventions)
+- [Server vs Client Components](#server-vs-client-components)
+- [Data Fetching](#data-fetching)
+- [Component Architecture](#component-architecture)
+- [Styling with Tailwind](#styling-with-tailwind)
+- [State Management](#state-management)
+- [API Communication](#api-communication)
+- [Forms and Validation](#forms-and-validation)
+- [Error Handling](#error-handling)
+- [Testing Standards](#testing-standards)
+- [TypeScript Standards](#typescript-standards)
+- [Git Workflow](#git-workflow)
+
+---
+
+## Technology Stack
+
+| Concern | Technology |
+|---|---|
+| Framework | Next.js (App Router) |
+| Language | TypeScript (strict mode) |
+| Styling | Tailwind CSS |
+| Testing | Jest + React Testing Library |
+| E2E Testing | Playwright |
+| HTTP Client | fetch (native) or axios |
+| Forms | React Hook Form (if needed) |
+
+---
+
+## Architecture Overview
+
+```
+app/                    # Next.js App Router — pages, layouts, routes
+components/             # Reusable UI components (Server and Client)
+  ui/                   # Atomic/primitive components (Button, Input, Card...)
+  shared/               # Composite components used across features
+  [feature]/            # Feature-specific components
+hooks/                  # Custom React hooks (client-side)
+lib/                    # Utilities, API clients, helpers
+  api/                  # API service functions
+  utils/                # Pure utility functions
+types/                  # Shared TypeScript types and interfaces
+```
+
+---
+
+## Project Structure
+
+```
+scrappy/frontend/
+├── app/
+│   ├── layout.tsx               # Root layout
+│   ├── page.tsx                 # Home page
+│   ├── globals.css              # Global styles + Tailwind directives
+│   └── [feature]/
+│       ├── page.tsx             # Feature page (Server Component by default)
+│       ├── layout.tsx           # Optional feature layout
+│       └── loading.tsx          # Loading UI
+├── components/
+│   ├── ui/                      # Primitive components
+│   └── [feature]/               # Feature-specific components
+├── hooks/                       # Custom hooks (client-side only)
+├── lib/
+│   ├── api/                     # API service modules
+│   └── utils/                   # Utility functions
+├── types/                       # Shared TypeScript interfaces
+├── public/                      # Static assets
+├── tailwind.config.ts
+├── next.config.ts
+└── tsconfig.json
+```
+
+---
+
+## App Router Conventions
+
+- **`page.tsx`** — defines the UI for a route segment. Always a Server Component unless `'use client'` is needed.
+- **`layout.tsx`** — wraps children and persists across navigations. Use for navigation, sidebars, and shared UI.
+- **`loading.tsx`** — shown while the page segment is loading (automatic Suspense boundary).
+- **`error.tsx`** — must be a Client Component. Handles errors for a route segment.
+- **`not-found.tsx`** — rendered when `notFound()` is called.
+
+File naming uses lowercase with hyphens for directories: `app/user-profile/page.tsx`.
+
+---
+
+## Server vs Client Components
+
+### Server Components (default)
+
+- No `'use client'` directive
+- Can be `async` — fetch data directly
+- Cannot use browser APIs, event handlers, or React hooks
+- Keep as Server Components as long as possible for performance
+
+```tsx
+// app/orders/page.tsx — Server Component
+import { getOrders } from '@/lib/api/ordersApi';
+
+export default async function OrdersPage() {
+  const orders = await getOrders();
+
+  return (
+    <main className="container mx-auto py-8">
+      <h1 className="text-2xl font-bold mb-4">Orders</h1>
+      <OrderList orders={orders} />
+    </main>
+  );
+}
+```
+
+### Client Components
+
+Add `'use client'` only when the component needs:
+- Event handlers (`onClick`, `onChange`)
+- React hooks (`useState`, `useEffect`, `useRef`)
+- Browser APIs
+- Third-party libraries that use browser APIs
+
+```tsx
+// components/ui/SubmitButton.tsx — Client Component
+'use client';
+
+import { useState } from 'react';
+
+interface SubmitButtonProps {
+  label: string;
+  onSubmit: () => Promise<void>;
+}
+
+export function SubmitButton({ label, onSubmit }: SubmitButtonProps) {
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleClick = async () => {
+    setIsLoading(true);
+    try {
+      await onSubmit();
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <button
+      onClick={handleClick}
+      disabled={isLoading}
+      className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+    >
+      {isLoading ? 'Loading...' : label}
+    </button>
+  );
+}
+```
+
+**Rule:** Push `'use client'` as far down the component tree as possible. Wrap only the interactive parts.
+
+---
+
+## Data Fetching
+
+### In Server Components
+
+Fetch directly in `async` Server Components. Use `fetch` with Next.js caching options:
+
+```tsx
+// lib/api/ordersApi.ts
+const API_BASE_URL = process.env.API_BASE_URL!;
+
+export async function getOrders(): Promise<Order[]> {
+  const res = await fetch(`${API_BASE_URL}/orders`, {
+    cache: 'no-store', // or: next: { revalidate: 60 }
+  });
+
+  if (!res.ok) {
+    throw new Error(`Failed to fetch contacts: ${res.status}`);
+  }
+
+  return res.json();
+}
+```
+
+Caching options:
+- `cache: 'no-store'` — always fetch fresh (dynamic data)
+- `next: { revalidate: N }` — ISR, revalidate every N seconds
+- Default (no option) — static, cached at build time
+
+### In Client Components
+
+Use custom hooks for client-side data fetching:
+
+```tsx
+// hooks/useContacts.ts
+'use client';
+
+import { useState, useEffect } from 'react';
+import { Contact } from '@/types/contact';
+
+export function useContacts() {
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function fetchContacts() {
+      try {
+        const res = await fetch('/api/contacts');
+        if (!res.ok) throw new Error('Failed to load contacts');
+        const data = await res.json();
+        setContacts(data);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Unknown error');
+      } finally {
+        setIsLoading(false);
+      }
+    }
+
+    fetchContacts();
+  }, []);
+
+  return { contacts, isLoading, error };
+}
+```
+
+---
+
+## Component Architecture
+
+### Naming Conventions
+
+| Type | Convention | Example |
+|---|---|---|
+| Component files | PascalCase | `ContactCard.tsx` |
+| Hook files | camelCase prefixed with `use` | `useContacts.ts` |
+| Utility files | camelCase | `formatDate.ts` |
+| API service files | camelCase suffixed with `Api` | `ordersApi.ts` |
+
+### Component Props
+
+Always define explicit TypeScript interfaces for props:
+
+```tsx
+interface ContactCardProps {
+  name: string;
+  email: string;
+  message: string;
+  createdAt: string;
+  className?: string;
+}
+
+export function ContactCard({ name, email, message, createdAt, className }: ContactCardProps) {
+  return (
+    <div className={`rounded-lg border border-gray-200 p-4 ${className ?? ''}`}>
+      <p className="font-semibold text-gray-900">{name}</p>
+      <p className="text-sm text-gray-500">{email}</p>
+      <p className="mt-2 text-gray-700">{message}</p>
+    </div>
+  );
+}
+```
+
+### Component Rules
+
+- One component per file
+- Export named components (avoid default exports for components)
+- Keep components focused — split if a component does more than one thing
+- UI components in `components/ui/` must be purely presentational (no API calls, no business logic)
+
+---
+
+## Styling with Tailwind
+
+### Rules
+
+- Use Tailwind utility classes exclusively — no inline styles, no CSS Modules unless absolutely necessary
+- Use `cn()` utility (from `clsx` + `tailwind-merge`) for conditional and merged class names:
+
+```tsx
+// lib/utils/cn.ts
+import { clsx, type ClassValue } from 'clsx';
+import { twMerge } from 'tailwind-merge';
+
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
+}
+```
+
+```tsx
+<button className={cn('px-4 py-2 rounded-md', isLoading && 'opacity-50 cursor-not-allowed')} />
+```
+
+- Define design tokens (colors, spacing, fonts) in `tailwind.config.ts` — never hardcode hex values in classes
+- Use responsive prefixes (`sm:`, `md:`, `lg:`) for responsive layouts
+- Group classes logically: layout → spacing → typography → color → interaction
+
+### Tailwind Config
+
+```typescript
+// tailwind.config.ts
+import type { Config } from 'tailwindcss';
+
+const config: Config = {
+  content: ['./app/**/*.{ts,tsx}', './components/**/*.{ts,tsx}'],
+  theme: {
+    extend: {
+      colors: {
+        // Define project-specific colors here
+      },
+    },
+  },
+};
+
+export default config;
+```
+
+---
+
+## State Management
+
+- **Local state**: `useState` for component-specific UI state
+- **Server state**: Fetch in Server Components or use custom hooks with `fetch`
+- **Form state**: React Hook Form for complex forms
+- **Global state**: Use React Context only for truly global, rarely-changing state (theme, auth user). Avoid prop drilling more than 2 levels deep.
+- No external state management library (Redux, Zustand) unless the project scope justifies it
+
+---
+
+## API Communication
+
+All API calls go through service modules in `lib/api/`. Never call `fetch` directly inside components.
+
+```typescript
+// lib/api/ordersApi.ts
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL!;
+
+export async function createOrder(data: CreateOrderInput): Promise<{ id: string }> {
+  const res = await fetch(`${BASE_URL}/orders`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({}));
+    throw new Error(error.error ?? `Request failed with status ${res.status}`);
+  }
+
+  return res.json();
+}
+```
+
+**Rules:**
+- Use `NEXT_PUBLIC_API_URL` for client-side calls, `API_BASE_URL` for server-side
+- Always check `res.ok` and throw a meaningful error
+- Return typed data from service functions (no `any`)
+- Handle network errors separately from HTTP errors
+
+---
+
+## Forms and Validation
+
+Use React Hook Form for forms with more than 2 fields:
+
+```tsx
+'use client';
+
+import { useForm } from 'react-hook-form';
+
+interface OrderFormData {
+  title: string;
+  description: string;
+}
+
+export function OrderForm() {
+  const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<OrderFormData>();
+
+  const onSubmit = async (data: OrderFormData) => {
+    await createOrder(data);
+  };
+
+  return (
+    <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+      <div>
+        <input
+          {...register('title', { required: 'Title is required' })}
+          className="w-full rounded-md border border-gray-300 px-3 py-2"
+          placeholder="Title"
+        />
+        {errors.title && <p className="mt-1 text-sm text-red-600">{errors.title.message}</p>}
+      </div>
+      <button type="submit" disabled={isSubmitting} className="...">
+        {isSubmitting ? 'Saving...' : 'Save'}
+      </button>
+    </form>
+  );
+}
+```
+
+---
+
+## Error Handling
+
+### Route-Level Errors (`error.tsx`)
+
+```tsx
+// app/[feature]/error.tsx
+'use client';
+
+export default function ErrorPage({ error, reset }: { error: Error; reset: () => void }) {
+  return (
+    <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
+      <p className="text-red-600 font-medium">{error.message}</p>
+      <button onClick={reset} className="px-4 py-2 bg-gray-100 rounded-md hover:bg-gray-200">
+        Try again
+      </button>
+    </div>
+  );
+}
+```
+
+### Component-Level Errors
+
+Use a local error state for form submissions and mutations:
+
+```tsx
+const [error, setError] = useState<string | null>(null);
+
+const handleSubmit = async () => {
+  setError(null);
+  try {
+    await createOrder(data);
+  } catch (err) {
+    setError(err instanceof Error ? err.message : 'Something went wrong');
+  }
+};
+```
+
+Display errors inline near the action that caused them, not in a global toast unless the project has an established notification system.
+
+---
+
+## Testing Standards
+
+### Unit Tests (Jest + React Testing Library)
+
+```tsx
+// __tests__/components/ContactCard.test.tsx
+import { render, screen } from '@testing-library/react';
+import { ContactCard } from '@/components/ContactCard';
+
+describe('ContactCard', () => {
+  it('renders contact name and email', () => {
+    render(
+      <ContactCard
+        name="Jane Doe"
+        email="jane@example.com"
+        message="Hello"
+        createdAt="2024-01-01T00:00:00Z"
+      />
+    );
+
+    expect(screen.getByText('Jane Doe')).toBeInTheDocument();
+    expect(screen.getByText('jane@example.com')).toBeInTheDocument();
+  });
+});
+```
+
+### E2E Tests (Playwright)
+
+```typescript
+// e2e/contact-form.spec.ts
+import { test, expect } from '@playwright/test';
+
+test('submits contact form successfully', async ({ page }) => {
+  await page.goto('/contact');
+  await page.fill('[name="name"]', 'Jane Doe');
+  await page.fill('[name="email"]', 'jane@example.com');
+  await page.fill('[name="message"]', 'Hello world');
+  await page.click('button[type="submit"]');
+  await expect(page.getByText('Message sent')).toBeVisible();
+});
+```
+
+**Rules:**
+- Test behavior, not implementation (no testing internal state)
+- Use `getByRole`, `getByText`, `getByLabelText` — avoid `getByTestId` unless no semantic selector exists
+- Mock API calls in unit tests; use real API or MSW in E2E
+
+---
+
+## TypeScript Standards
+
+- `strict: true` in `tsconfig.json`
+- No `any` — use `unknown` and narrow types
+- Define all props with explicit interfaces
+- Use `type` for unions, `interface` for object shapes
+- All API response types must be defined in `types/`
+- Use `satisfies` for config objects to get type checking without widening
+
+---
+
+## Git Workflow
+
+- Branch naming: `feature/<ticket-id>-short-description`, `fix/<ticket-id>-short-description`
+- Commit message format: `<type>(<scope>): <description>` (Conventional Commits)
+  - Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `style`
+  - Example: `feat(contact-form): add contact submission form`
+- Always update `openspec/specs/api-spec.yml` when API contracts change
+- Co-locate component tests next to components or in `__tests__/` mirroring `app/` and `components/`
