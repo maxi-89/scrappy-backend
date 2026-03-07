@@ -9,6 +9,7 @@ from app.application.services.scraping_job_service import ScrapingJobService
 from app.application.services.user_service import UserService
 from app.domain.models.current_user import CurrentUser
 from app.domain.repositories.i_offer_repository import IOfferRepository
+from app.domain.repositories.i_pricing_repository import IPricingRepository
 from app.domain.repositories.i_scraping_job_repository import IScrapingJobRepository
 from app.domain.repositories.i_user_repository import IUserRepository
 from app.infrastructure.auth.auth0_jwt_verifier import verify_token
@@ -16,6 +17,7 @@ from app.infrastructure.aws.sfn_client import SfnStarterClient
 from app.infrastructure.database.session import get_db_session
 from app.infrastructure.errors.app_error import AppError
 from app.infrastructure.repositories.offer_repository import OfferRepository
+from app.infrastructure.repositories.pricing_repository import PricingRepository
 from app.infrastructure.repositories.scraping_job_repository import ScrapingJobRepository
 from app.infrastructure.repositories.user_repository import UserRepository
 
@@ -75,7 +77,14 @@ def get_offer_repository(
     return OfferRepository(session)
 
 
+def get_pricing_repository(
+    session: AsyncSession = Depends(get_db_session),
+) -> IPricingRepository:
+    return PricingRepository(session)
+
+
 def get_offer_service(
     repository: IOfferRepository = Depends(get_offer_repository),
+    pricing_repository: IPricingRepository = Depends(get_pricing_repository),
 ) -> OfferService:
-    return OfferService(repository)
+    return OfferService(repository, pricing_repository)

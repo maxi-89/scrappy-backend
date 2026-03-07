@@ -28,3 +28,9 @@ class IOfferRepository(ABC):
     async def has_orders(self, offer_id: str) -> bool:
         """Return True if the offer has any associated orders."""
         ...
+
+    @abstractmethod
+    async def find_all_active(self) -> list[Offer]: ...
+
+    @abstractmethod
+    async def find_active_by_id(self, offer_id: str) -> Offer | None: ...

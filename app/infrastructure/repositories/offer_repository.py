@@ -73,6 +73,19 @@ class OfferRepository(IOfferRepository):
         )
         return result.scalar_one_or_none() is not None
 
+    async def find_all_active(self) -> list[Offer]:
+        result = await self._session.execute(
+            select(OfferORM).where(OfferORM.is_active == True)  # noqa: E712
+        )
+        return [self._map_to_domain(row) for row in result.scalars().all()]
+
+    async def find_active_by_id(self, offer_id: str) -> Offer | None:
+        result = await self._session.execute(
+            select(OfferORM).where(OfferORM.id == offer_id, OfferORM.is_active == True)  # noqa: E712
+        )
+        row = result.scalar_one_or_none()
+        return self._map_to_domain(row) if row else None
+
     def _map_to_domain(self, row: OfferORM) -> Offer:
         return Offer(
             id=row.id,
