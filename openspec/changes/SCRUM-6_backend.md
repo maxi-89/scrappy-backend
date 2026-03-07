@@ -28,53 +28,52 @@ Since this is the **first backend story**, the plan also covers bootstrapping th
 ### Files to create
 
 ```
-backend/
-├── pyproject.toml                                         ← project deps + tooling config
-├── main.py                                                ← FastAPI app + Mangum handler + exception handlers
-├── .env.example                                           ← env var documentation
-├── app/
+pyproject.toml                                         ← project deps + tooling config
+main.py                                                ← FastAPI app + Mangum handler + exception handlers
+.env.example                                           ← env var documentation
+app/
+├── __init__.py
+├── domain/
+│   ├── __init__.py
+│   └── models/
+│       ├── __init__.py
+│       └── current_user.py                           ← CurrentUser frozen dataclass
+├── application/
+│   ├── __init__.py
+│   └── services/
+│       └── __init__.py
+├── infrastructure/
+│   ├── __init__.py
+│   ├── auth/
+│   │   ├── __init__.py
+│   │   └── auth0_jwt_verifier.py                     ← verify_token() with JWKS + lru_cache
+│   ├── database/
+│   │   ├── __init__.py
+│   │   └── session.py                                ← SQLAlchemy async session (stub)
+│   ├── errors/
+│   │   ├── __init__.py
+│   │   ├── app_error.py                              ← AppError(Exception)
+│   │   └── domain_validation_error.py                ← DomainValidationError(Exception)
+│   └── dependencies.py                               ← get_current_user + get_db_session
+└── presentation/
+    ├── __init__.py
+    └── routers/
+        ├── __init__.py
+        └── orders_router.py                          ← stub router with auth applied
+tests/
+├── __init__.py
+├── unit/
 │   ├── __init__.py
 │   ├── domain/
 │   │   ├── __init__.py
-│   │   └── models/
-│   │       ├── __init__.py
-│   │       └── current_user.py                           ← CurrentUser frozen dataclass
-│   ├── application/
-│   │   ├── __init__.py
-│   │   └── services/
-│   │       └── __init__.py
+│   │   └── test_current_user.py
 │   ├── infrastructure/
 │   │   ├── __init__.py
-│   │   ├── auth/
-│   │   │   ├── __init__.py
-│   │   │   └── auth0_jwt_verifier.py                     ← verify_token() with JWKS + lru_cache
-│   │   ├── database/
-│   │   │   ├── __init__.py
-│   │   │   └── session.py                                ← SQLAlchemy async session (stub)
-│   │   ├── errors/
-│   │   │   ├── __init__.py
-│   │   │   ├── app_error.py                              ← AppError(Exception)
-│   │   │   └── domain_validation_error.py                ← DomainValidationError(Exception)
-│   │   └── dependencies.py                               ← get_current_user + get_db_session
+│   │   └── test_auth0_jwt_verifier.py
 │   └── presentation/
 │       ├── __init__.py
-│       └── routers/
-│           ├── __init__.py
-│           └── orders_router.py                          ← stub router with auth applied
-└── tests/
-    ├── __init__.py
-    ├── unit/
-    │   ├── __init__.py
-    │   ├── domain/
-    │   │   ├── __init__.py
-    │   │   └── test_current_user.py
-    │   ├── infrastructure/
-    │   │   ├── __init__.py
-    │   │   └── test_auth0_jwt_verifier.py
-    │   └── presentation/
-    │       ├── __init__.py
-    │       └── test_orders_router_auth.py
-    └── conftest.py
+│       └── test_orders_router_auth.py
+└── conftest.py
 ```
 
 ### Dependency graph

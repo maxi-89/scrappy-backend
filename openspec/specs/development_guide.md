@@ -44,7 +44,7 @@ Step-by-step instructions to set up and run the project locally and deploy to pr
 ### 1. Install
 
 ```bash
-cd scrappy/backend
+cd scrappy-backend
 uv sync
 ```
 
@@ -152,33 +152,32 @@ After deploying, the CLI outputs the API Gateway endpoint URL.
 ### 9. Backend Project Structure
 
 ```
-backend/
-├── app/
+app/
+├── domain/
+│   ├── models/              # Domain entities (dataset.py, business.py, order.py)
+│   └── repositories/        # Repository interfaces (i_dataset_repository.py)
+├── application/
+│   └── services/            # Application services (dataset_service.py)
+├── infrastructure/
+│   ├── database/            # SQLAlchemy engine, session, ORM models
+│   ├── repositories/        # Repository implementations
+│   └── errors/              # AppError, DomainValidationError
+└── presentation/
+    ├── routers/             # FastAPI routers (datasets_router.py)
+    └── schemas/             # Pydantic I/O schemas (dataset_schemas.py)
+tests/
+├── unit/
 │   ├── domain/
-│   │   ├── models/              # Domain entities (dataset.py, business.py, order.py)
-│   │   └── repositories/        # Repository interfaces (i_dataset_repository.py)
 │   ├── application/
-│   │   └── services/            # Application services (dataset_service.py)
-│   ├── infrastructure/
-│   │   ├── database/            # SQLAlchemy engine, session, ORM models
-│   │   ├── repositories/        # Repository implementations
-│   │   └── errors/              # AppError, DomainValidationError
 │   └── presentation/
-│       ├── routers/             # FastAPI routers (datasets_router.py)
-│       └── schemas/             # Pydantic I/O schemas (dataset_schemas.py)
-├── tests/
-│   ├── unit/
-│   │   ├── domain/
-│   │   ├── application/
-│   │   └── presentation/
-│   └── integration/
-├── alembic/                     # Database migrations
-├── main.py                      # FastAPI app + Mangum Lambda handler
-├── pyproject.toml
-├── .env                         ← not committed
-├── .env.example
-├── .gitignore
-└── Makefile
+└── integration/
+alembic/                     # Database migrations
+main.py                      # FastAPI app + Mangum Lambda handler
+pyproject.toml
+.env                         ← not committed
+.env.example
+.gitignore
+Makefile
 ```
 
 ### 10. Makefile Reference
@@ -200,7 +199,7 @@ make db-reset     # supabase db reset
 ### 1. Install
 
 ```bash
-cd scrappy/frontend
+cd scrappy-frontend
 npm install
 ```
 
