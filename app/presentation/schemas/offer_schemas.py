@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -28,3 +29,12 @@ class OfferResponse(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+
+
+class PublicOfferResponse(BaseModel):
+    id: str
+    title: str
+    category: str
+    description: str | None
+    is_active: bool
+    price_usd: float | None = None

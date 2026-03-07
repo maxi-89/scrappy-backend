@@ -5,17 +5,24 @@ from datetime import UTC, datetime
 
 from app.domain.models.offer import Offer
 from app.domain.repositories.i_offer_repository import IOfferRepository
+from app.domain.repositories.i_pricing_repository import IPricingRepository
 from app.infrastructure.errors.app_error import AppError
 from app.presentation.schemas.offer_schemas import (
     CreateOfferRequest,
     OfferResponse,
+    PublicOfferResponse,
     UpdateOfferRequest,
 )
 
 
 class OfferService:
-    def __init__(self, repository: IOfferRepository) -> None:
+    def __init__(
+        self,
+        repository: IOfferRepository,
+        pricing_repository: IPricingRepository | None = None,
+    ) -> None:
         self._repository = repository
+        self._pricing_repository = pricing_repository
 
     async def create_offer(self, payload: CreateOfferRequest) -> OfferResponse:
         existing = await self._repository.find_by_category(payload.category)
@@ -60,3 +67,38 @@ class OfferService:
             raise AppError("Cannot delete offer with associated orders", status_code=409)
 
         await self._repository.delete(offer_id)
+
+    async def list_active_offers(self, zone: str | None) -> list[PublicOfferResponse]:
+        offers = await self._repository.find_all_active()
+        price_usd = await self._resolve_price(zone)
+        return [
+            PublicOfferResponse(
+                id=o.id,
+                title=o.title,
+                category=o.category,
+                description=o.description,
+                is_active=o.is_active,
+                price_usd=price_usd,
+            )
+            for o in offers
+        ]
+
+    async def get_active_offer(self, offer_id: str, zone: str | None) -> PublicOfferResponse | None:
+        offer = await self._repository.find_active_by_id(offer_id)
+        if offer is None:
+            return None
+        price_usd = await self._resolve_price(zone)
+        return PublicOfferResponse(
+            id=offer.id,
+            title=offer.title,
+            category=offer.category,
+            description=offer.description,
+            is_active=offer.is_active,
+            price_usd=price_usd,
+        )
+
+    async def _resolve_price(self, zone: str | None) -> float | None:
+        if zone is None or self._pricing_repository is None:
+            return None
+        pricing = await self._pricing_repository.find_by_zone(zone)
+        return float(pricing.price_usd) if pricing else None
