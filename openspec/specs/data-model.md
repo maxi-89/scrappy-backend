@@ -34,15 +34,82 @@ Raw scraped business records obtained from Google Maps.
 
 ---
 
+### `offers`
+
+Admin-defined scraping offer categories available for purchase. Each offer represents a business category that users can order scraped data for.
+
+> Prices are **not stored per offer** — they come from the global `pricing_config` table and vary by zone type (province or city).
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| `id` | `uuid` | PK, default `gen_random_uuid()` | Offer ID |
+| `category` | `text` | NOT NULL, UNIQUE | Category slug (e.g. `restaurants`, `clinics`) |
+| `title` | `text` | NOT NULL | Display title (e.g. `"Restaurants"`) |
+| `description` | `text` | | Markdown description shown to buyers |
+| `is_active` | `boolean` | NOT NULL, default true | Visible to buyers only when true |
+| `created_at` | `timestamptz` | NOT NULL, default `now()` | Creation timestamp |
+| `updated_at` | `timestamptz` | NOT NULL, default `now()` | Last update timestamp |
+
+**Indexes**: `category`, `is_active`
+
+---
+
+### `pricing_config`
+
+Singleton table storing global pricing configuration. There is always exactly **one row** (`id = 1`).
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| `id` | `integer` | PK, default 1 | Always 1 (singleton) |
+| `price_province_usd` | `numeric(10,2)` | NOT NULL, CHECK > 0 | Price for province-level orders in USD |
+| `price_city_usd` | `numeric(10,2)` | NOT NULL, CHECK > 0 | Price for city/locality-level orders in USD |
+| `updated_at` | `timestamptz` | NOT NULL, default `now()` | Last update timestamp |
+
+> Province orders are more expensive than city orders, as they cover a larger geographic area and produce more records.
+
+---
+
+### `orders`
+
+Purchase records. Each order represents a single user-initiated scraping request for a specific offer, zone, and output format. One order = one scraping result.
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| `id` | `uuid` | PK, default `gen_random_uuid()` | Order ID |
+| `user_id` | `uuid` | NOT NULL, FK → `users.id` | Buyer |
+| `offer_id` | `uuid` | NOT NULL, FK → `offers.id` | Scraping offer (category) selected |
+| `zone_type` | `text` | NOT NULL | `province` \| `city` |
+| `zone_name` | `text` | NOT NULL | Name of the province or city (e.g. `"Buenos Aires"`, `"Córdoba"`) |
+| `output_format` | `text` | NOT NULL | `csv` \| `xlsx` \| `json` |
+| `price_usd` | `numeric(10,2)` | NOT NULL | Price snapshot at time of order (from `pricing_config`) |
+| `status` | `text` | NOT NULL | `pending` \| `paid` \| `processing` \| `completed` \| `failed` \| `refunded` |
+| `stripe_payment_intent_id` | `text` | UNIQUE | Stripe payment reference |
+| `result_url` | `text` | | Storage URL of the generated result file (set when status = `completed`) |
+| `email_sent_at` | `timestamptz` | | When the result email was sent to the user |
+| `created_at` | `timestamptz` | NOT NULL, default `now()` | Order creation time |
+| `paid_at` | `timestamptz` | | Payment confirmation time |
+
+**Indexes**: `user_id`, `status`, `offer_id`
+
+**Order status flow**:
+```
+pending → paid → processing → completed
+                            → failed
+       → refunded (from paid or completed)
+```
+
+---
+
 ### `scraping_jobs`
 
-Tracks background scraping tasks.
+Tracks background scraping tasks. Each job is triggered automatically when an order is paid.
 
 | Column | Type | Constraints | Description |
 |---|---|---|---|
 | `id` | `uuid` | PK, default `gen_random_uuid()` | Job ID |
-| `category` | `text` | NOT NULL | Target category to scrape |
-| `zone` | `text` | NOT NULL | Target geographic zone |
+| `order_id` | `uuid` | NOT NULL, UNIQUE, FK → `orders.id` | Associated order (one job per order) |
+| `category` | `text` | NOT NULL | Target category to scrape (copied from offer at job creation) |
+| `zone` | `text` | NOT NULL | Full zone description (e.g. `"Buenos Aires province"`) |
 | `status` | `text` | NOT NULL | `pending` \| `running` \| `completed` \| `failed` |
 | `records_scraped` | `integer` | default 0 | Number of records collected |
 | `error_message` | `text` | | Error details if failed |
@@ -50,42 +117,7 @@ Tracks background scraping tasks.
 | `finished_at` | `timestamptz` | | When job completed or failed |
 | `created_at` | `timestamptz` | NOT NULL, default `now()` | Job creation time |
 
-**Indexes**: `status`, `(category, zone)`
-
----
-
-### `datasets`
-
-Curated, purchasable collections of business records.
-
-| Column | Type | Constraints | Description |
-|---|---|---|---|
-| `id` | `uuid` | PK, default `gen_random_uuid()` | Dataset ID |
-| `title` | `text` | NOT NULL | Display title (e.g. `"Restaurants CABA 2025"`) |
-| `description` | `text` | | Markdown description shown to buyers |
-| `category` | `text` | NOT NULL | Primary business category |
-| `zone` | `text` | NOT NULL | Primary geographic zone |
-| `record_count` | `integer` | NOT NULL, default 0 | Number of business records included |
-| `price_usd` | `numeric(10,2)` | NOT NULL | Sale price in USD |
-| `is_published` | `boolean` | NOT NULL, default false | Visible to buyers only when true |
-| `sample_data` | `jsonb` | | Up to 5 sample records for preview |
-| `created_at` | `timestamptz` | NOT NULL, default `now()` | Creation timestamp |
-| `updated_at` | `timestamptz` | NOT NULL, default `now()` | Last update timestamp |
-
-**Indexes**: `category`, `zone`, `is_published`
-
----
-
-### `dataset_businesses`
-
-Join table linking datasets to business records (many-to-many).
-
-| Column | Type | Constraints | Description |
-|---|---|---|---|
-| `dataset_id` | `uuid` | FK → `datasets.id` ON DELETE CASCADE | Dataset reference |
-| `business_id` | `uuid` | FK → `businesses.id` ON DELETE CASCADE | Business reference |
-
-**Primary key**: `(dataset_id, business_id)`
+**Indexes**: `status`, `order_id`
 
 ---
 
@@ -108,53 +140,14 @@ Registered buyers.
 
 ---
 
-### `orders`
-
-Purchase records for datasets.
-
-| Column | Type | Constraints | Description |
-|---|---|---|---|
-| `id` | `uuid` | PK, default `gen_random_uuid()` | Order ID |
-| `user_id` | `uuid` | NOT NULL, FK → `users.id` | Buyer |
-| `status` | `text` | NOT NULL | `pending` \| `paid` \| `failed` \| `refunded` |
-| `total_usd` | `numeric(10,2)` | NOT NULL | Total amount charged |
-| `stripe_payment_intent_id` | `text` | UNIQUE | Stripe payment reference |
-| `created_at` | `timestamptz` | NOT NULL, default `now()` | Order creation time |
-| `paid_at` | `timestamptz` | | Payment confirmation time |
-
-**Indexes**: `user_id`, `status`
-
----
-
-### `order_items`
-
-Datasets included in an order (one order can have multiple datasets).
-
-| Column | Type | Constraints | Description |
-|---|---|---|---|
-| `id` | `uuid` | PK, default `gen_random_uuid()` | Item ID |
-| `order_id` | `uuid` | NOT NULL, FK → `orders.id` ON DELETE CASCADE | Parent order |
-| `dataset_id` | `uuid` | NOT NULL, FK → `datasets.id` | Dataset purchased |
-| `price_usd` | `numeric(10,2)` | NOT NULL | Price at time of purchase (snapshot) |
-| `download_token` | `text` | UNIQUE | Secure one-time download token |
-| `downloaded_at` | `timestamptz` | | When buyer first downloaded |
-
-**Indexes**: `order_id`, `download_token`
-
----
-
 ## Entity Relationships
 
 ```
-scraping_jobs ──────────────────────────────────── (independent)
+pricing_config ─────────────────────────────── (singleton, no FK)
 
-businesses ◄──── dataset_businesses ────► datasets
-                                              │
-                                         order_items
-                                              │
-                                           orders
-                                              │
-                                           users
+offers ◄──────────── orders ────────────► users
+                        │
+                   scraping_jobs
 ```
 
 ---
@@ -163,25 +156,25 @@ businesses ◄──── dataset_businesses ────► datasets
 
 | Pattern | Table | Filter |
 |---|---|---|
-| List published datasets by category | `datasets` | `is_published = true AND category = ?` |
-| List datasets by zone | `datasets` | `is_published = true AND zone = ?` |
-| Get dataset with sample data | `datasets` | `id = ?` |
-| Get all businesses in a dataset | `dataset_businesses JOIN businesses` | `dataset_id = ?` |
+| List active offers | `offers` | `is_active = true` |
+| Get offer by category slug | `offers` | `category = ?` |
+| Get global pricing config | `pricing_config` | `id = 1` |
 | Get orders for a user | `orders` | `user_id = ?` |
-| Get items in an order | `order_items` | `order_id = ?` |
-| Validate download token | `order_items` | `download_token = ?` |
+| Get order details (status polling) | `orders` | `id = ?` |
+| Get scraping job for an order | `scraping_jobs` | `order_id = ?` |
+| List all orders (admin) | `orders JOIN users JOIN offers` | status filter, pagination |
 | List businesses by category+zone | `businesses` | `category = ? AND zone = ?` |
 
 ---
 
 ## Key Design Conventions
 
-- All primary keys use **UUID** (`gen_random_uuid()`)
+- All primary keys use **UUID** (`gen_random_uuid()`) except `pricing_config` which uses integer `1` (singleton)
 - All tables include `created_at timestamptz NOT NULL DEFAULT now()`
 - All mutable tables include `updated_at timestamptz NOT NULL DEFAULT now()` with an update trigger
 - Snake_case for all table and column names
 - Prices stored as `numeric(10,2)` — never float in financial columns
 - Status fields use `text` with application-level enum validation (not PG enums, for easier migration)
 - Foreign keys always define explicit `ON DELETE` behavior
-- `sample_data` stored as `jsonb` to avoid separate query for previews
-- Download tokens generated as cryptographically secure random strings (32 bytes, hex-encoded)
+- `result_url` stores the file storage URL (S3/Supabase Storage) after scraping completes
+- Output files are generated on demand when the scraping job finishes; format matches `orders.output_format`
