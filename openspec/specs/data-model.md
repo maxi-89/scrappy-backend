@@ -36,11 +36,14 @@ Raw scraped business records obtained from Google Maps.
 
 ### `scraping_jobs`
 
-Tracks background scraping tasks.
+Tracks background scraping tasks. Jobs can be created in two ways:
+- **Admin-triggered** (`POST /admin/scraping-jobs`): `order_id` is NULL
+- **Order-triggered** (future, SCRUM-19): `order_id` references the paid order
 
 | Column | Type | Constraints | Description |
 |---|---|---|---|
 | `id` | `uuid` | PK, default `gen_random_uuid()` | Job ID |
+| `order_id` | `text` | nullable | Associated order (NULL for admin-triggered jobs). FK to `orders.id` added in future migration. |
 | `category` | `text` | NOT NULL | Target category to scrape |
 | `zone` | `text` | NOT NULL | Target geographic zone |
 | `status` | `text` | NOT NULL | `pending` \| `running` \| `completed` \| `failed` |
@@ -50,7 +53,7 @@ Tracks background scraping tasks.
 | `finished_at` | `timestamptz` | | When job completed or failed |
 | `created_at` | `timestamptz` | NOT NULL, default `now()` | Job creation time |
 
-**Indexes**: `status`, `(category, zone)`
+**Indexes**: `status`
 
 ---
 
