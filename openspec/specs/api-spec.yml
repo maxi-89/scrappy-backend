@@ -2,11 +2,12 @@ openapi: 3.0.3
 info:
   title: Scrappy API
   description: |
-    Scrappy is a business data marketplace.
-    It scrapes, cleans, normalizes, and sells datasets of businesses obtained from Google Maps,
-    segmented by category, geographic zone, or business type.
+    Scrappy is an on-demand business data marketplace.
+    Users purchase scraping jobs for a specific business category and geographic zone.
+    After payment, the scraping runs asynchronously and the result is delivered by email
+    and available for download in CSV, Excel, or JSON format.
 
-    **Authentication**: Protected endpoints require a Bearer token (Supabase JWT).
+    **Authentication**: Protected endpoints require a Bearer token (Auth0 JWT).
     **Admin endpoints**: Require an additional `X-Admin-Key` header.
   version: 1.0.0
   contact:
@@ -21,74 +22,69 @@ servers:
 security: []
 
 tags:
-  - name: datasets
-    description: Purchasable business data collections
+  - name: offers
+    description: Available scraping service offerings
   - name: orders
-    description: Purchase flow and download
+    description: Purchase flow, scraping status and result download
   - name: auth
-    description: Registration and login (Supabase Auth)
+    description: Registration and login (Auth0)
   - name: admin
-    description: Internal operations — scraping, dataset management
+    description: Internal operations — offers, scraping, pricing, orders
 
 paths:
 
   # ─────────────────────────────────────────────────────────────────
-  # DATASETS (public)
+  # OFFERS (public)
   # ─────────────────────────────────────────────────────────────────
 
-  /datasets:
+  /offers:
     get:
-      summary: List published datasets
-      description: Returns all published datasets. Supports filtering by category and zone.
-      operationId: listDatasets
-      tags: [datasets]
+      summary: List active offers
+      description: |
+        Returns all active scraping offers. Optionally pass `zone` to get the dynamic
+        price for that zone included in each offer.
+      operationId: listOffers
+      tags: [offers]
       parameters:
-        - name: category
-          in: query
-          schema:
-            type: string
-          example: restaurants
         - name: zone
           in: query
+          description: Zone to resolve dynamic pricing for
           schema:
             type: string
           example: CABA
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            default: 20
-            maximum: 100
-        - name: offset
-          in: query
-          schema:
-            type: integer
-            default: 0
       responses:
         '200':
-          description: List of datasets
+          description: List of active offers
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DatasetListResponse'
+                type: array
+                items:
+                  $ref: '#/components/schemas/OfferResponse'
         '500':
           $ref: '#/components/responses/InternalError'
 
-  /datasets/{dataset_id}:
+  /offers/{offer_id}:
     get:
-      summary: Get dataset details
-      description: Returns dataset metadata including sample data (up to 5 records).
-      operationId: getDataset
-      tags: [datasets]
+      summary: Get offer detail
+      description: Returns offer metadata. Pass `zone` to get the dynamic price for that zone.
+      operationId: getOffer
+      tags: [offers]
       parameters:
-        - $ref: '#/components/parameters/DatasetId'
+        - $ref: '#/components/parameters/OfferId'
+        - name: zone
+          in: query
+          description: Zone to resolve dynamic pricing for
+          schema:
+            type: string
+          example: CABA
       responses:
         '200':
-          description: Dataset details with sample data
+          description: Offer detail with optional zone price
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DatasetDetailResponse'
+                $ref: '#/components/schemas/OfferResponse'
         '404':
           $ref: '#/components/responses/NotFound'
         '500':
@@ -102,8 +98,9 @@ paths:
     post:
       summary: Create an order (initiate purchase)
       description: |
-        Creates a pending order and returns a Stripe PaymentIntent client secret.
-        The client completes payment on the frontend; the webhook confirms it.
+        Creates a pending order for a specific offer and zone, and returns a Stripe
+        PaymentIntent client secret. The client completes payment on the frontend.
+        The Stripe webhook confirms payment and triggers the scraping job.
       operationId: createOrder
       tags: [orders]
       security:
@@ -152,7 +149,8 @@ paths:
 
   /orders/{order_id}:
     get:
-      summary: Get order details
+      summary: Get order detail
+      description: Returns order details including the linked scraping job status.
       operationId: getOrder
       tags: [orders]
       security:
@@ -161,7 +159,7 @@ paths:
         - $ref: '#/components/parameters/OrderId'
       responses:
         '200':
-          description: Order with its items
+          description: Order detail with scraping job status
           content:
             application/json:
               schema:
@@ -175,32 +173,36 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
-  /orders/{order_id}/items/{item_id}/download:
+  /orders/{order_id}/download:
     get:
-      summary: Download purchased dataset
+      summary: Download scraping result
       description: |
-        Returns the full dataset as a CSV file.
-        Only available for paid orders. Records the download timestamp on first access.
-      operationId: downloadDataset
+        Returns the scraping result file in the format chosen at order creation
+        (CSV, Excel, or JSON). Only available when order status is `completed`.
+        Records the download timestamp on first access.
+      operationId: downloadResult
       tags: [orders]
       security:
         - BearerAuth: []
       parameters:
         - $ref: '#/components/parameters/OrderId'
-        - name: item_id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
       responses:
         '200':
-          description: Dataset file (CSV)
+          description: Result file in the requested format
           content:
             text/csv:
               schema:
                 type: string
                 format: binary
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/BusinessRecord'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -219,7 +221,12 @@ paths:
       summary: Stripe payment webhook
       description: |
         Receives Stripe webhook events. Verifies the `Stripe-Signature` header.
-        On `payment_intent.succeeded`, marks the order as paid and generates download tokens.
+        On `payment_intent.succeeded`:
+          1. Marks the order as `paid`.
+          2. Triggers an AWS Step Functions scraping execution for the order's category and zone.
+          3. Sends a confirmation email to the buyer.
+        On scraping completion, the order transitions to `completed` and a download-ready
+        email is sent.
       operationId: stripeWebhook
       tags: [orders]
       requestBody:
@@ -242,8 +249,8 @@ paths:
 
   /admin/scraping-jobs:
     post:
-      summary: Trigger a scraping job
-      description: Starts a background job to scrape businesses from Google Maps for a given category and zone.
+      summary: Trigger a scraping job (admin)
+      description: Starts a Step Functions execution to scrape businesses from Google Maps for a given category and zone.
       operationId: createScrapingJob
       tags: [admin]
       security:
@@ -321,14 +328,14 @@ paths:
           $ref: '#/components/responses/InternalError'
 
   # ─────────────────────────────────────────────────────────────────
-  # ADMIN — DATASETS
+  # ADMIN — OFFERS
   # ─────────────────────────────────────────────────────────────────
 
-  /admin/datasets:
+  /admin/offers:
     post:
-      summary: Create a new dataset
-      description: Creates a dataset from existing scraped businesses filtered by category and zone.
-      operationId: createDataset
+      summary: Create a new offer
+      description: Creates a scraping service offering for a given category.
+      operationId: createOffer
       tags: [admin]
       security:
         - AdminKey: []
@@ -337,14 +344,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateDatasetRequest'
+              $ref: '#/components/schemas/CreateOfferRequest'
       responses:
         '201':
-          description: Dataset created
+          description: Offer created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DatasetDetailResponse'
+                $ref: '#/components/schemas/OfferAdminResponse'
         '400':
           $ref: '#/components/responses/ValidationError'
         '401':
@@ -352,28 +359,28 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
-  /admin/datasets/{dataset_id}:
+  /admin/offers/{offer_id}:
     patch:
-      summary: Update dataset metadata
-      operationId: updateDataset
+      summary: Update offer metadata or active status
+      operationId: updateOffer
       tags: [admin]
       security:
         - AdminKey: []
       parameters:
-        - $ref: '#/components/parameters/DatasetId'
+        - $ref: '#/components/parameters/OfferId'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UpdateDatasetRequest'
+              $ref: '#/components/schemas/UpdateOfferRequest'
       responses:
         '200':
-          description: Dataset updated
+          description: Offer updated
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DatasetDetailResponse'
+                $ref: '#/components/schemas/OfferAdminResponse'
         '400':
           $ref: '#/components/responses/ValidationError'
         '401':
@@ -384,20 +391,109 @@ paths:
           $ref: '#/components/responses/InternalError'
 
     delete:
-      summary: Delete a dataset
-      operationId: deleteDataset
+      summary: Delete an offer
+      operationId: deleteOffer
       tags: [admin]
       security:
         - AdminKey: []
       parameters:
-        - $ref: '#/components/parameters/DatasetId'
+        - $ref: '#/components/parameters/OfferId'
       responses:
         '204':
-          description: Dataset deleted
+          description: Offer deleted
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ─────────────────────────────────────────────────────────────────
+  # ADMIN — PRICING
+  # ─────────────────────────────────────────────────────────────────
+
+  /admin/pricing:
+    get:
+      summary: List all zone prices
+      description: Returns the full pricing table (zone → price_usd).
+      operationId: listPricing
+      tags: [admin]
+      security:
+        - AdminKey: []
+      responses:
+        '200':
+          description: List of zone prices
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PricingEntryResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    put:
+      summary: Upsert zone prices
+      description: |
+        Creates or updates pricing entries for one or more zones.
+        Zones not included in the request are not affected.
+      operationId: upsertPricing
+      tags: [admin]
+      security:
+        - AdminKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpsertPricingRequest'
+      responses:
+        '200':
+          description: Pricing updated
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PricingEntryResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ─────────────────────────────────────────────────────────────────
+  # ADMIN — ORDERS
+  # ─────────────────────────────────────────────────────────────────
+
+  /admin/orders:
+    get:
+      summary: List all orders
+      description: Returns all orders across all users. Supports filtering by status.
+      operationId: listAllOrders
+      tags: [admin]
+      security:
+        - AdminKey: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, paid, scraping, completed, failed, refunded]
+      responses:
+        '200':
+          description: List of orders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/OrderDetailResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalError'
 
@@ -420,8 +516,8 @@ components:
       description: Internal admin API key for backend operations
 
   parameters:
-    DatasetId:
-      name: dataset_id
+    OfferId:
+      name: offer_id
       in: path
       required: true
       schema:
@@ -469,108 +565,196 @@ components:
 
   schemas:
 
-    # ── Datasets ────────────────────────────────────────────────
+    # ── Offers ───────────────────────────────────────────────────
 
-    DatasetSummary:
+    OfferResponse:
       type: object
-      required: [id, title, category, zone, record_count, price_usd, created_at]
+      required: [id, title, category, description, is_active]
       properties:
         id:
           type: string
           format: uuid
         title:
           type: string
-          example: Restaurants CABA 2025
+          example: Restaurants
         category:
           type: string
           example: restaurants
+        description:
+          type: string
+          example: Full contact list of restaurants including phone, address, website and rating.
+        is_active:
+          type: boolean
+        price_usd:
+          type: number
+          format: float
+          nullable: true
+          description: Price for the requested zone. Present only when `zone` query param is provided.
+          example: 29.99
+
+    OfferAdminResponse:
+      allOf:
+        - $ref: '#/components/schemas/OfferResponse'
+        - type: object
+          properties:
+            created_at:
+              type: string
+              format: date-time
+            updated_at:
+              type: string
+              format: date-time
+
+    CreateOfferRequest:
+      type: object
+      required: [title, category]
+      properties:
+        title:
+          type: string
+          minLength: 2
+          maxLength: 200
+          example: Restaurants
+        category:
+          type: string
+          minLength: 2
+          maxLength: 100
+          example: restaurants
+        description:
+          type: string
+          maxLength: 2000
+        is_active:
+          type: boolean
+          default: false
+
+    UpdateOfferRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 2
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 2000
+        is_active:
+          type: boolean
+
+    # ── Pricing ──────────────────────────────────────────────────
+
+    PricingEntryResponse:
+      type: object
+      required: [id, zone, price_usd]
+      properties:
+        id:
+          type: string
+          format: uuid
         zone:
           type: string
           example: CABA
-        record_count:
-          type: integer
-          example: 1250
         price_usd:
           type: number
           format: float
           example: 29.99
-        created_at:
-          type: string
-          format: date-time
 
-    DatasetDetailResponse:
-      allOf:
-        - $ref: '#/components/schemas/DatasetSummary'
-        - type: object
-          properties:
-            description:
-              type: string
-              example: Full list of restaurants in Buenos Aires CABA area, scraped January 2025.
-            sample_data:
-              type: array
-              maxItems: 5
-              items:
-                $ref: '#/components/schemas/BusinessRecord'
-
-    DatasetListResponse:
+    UpsertPricingRequest:
       type: object
-      required: [items, total, limit, offset]
+      required: [entries]
       properties:
-        items:
+        entries:
           type: array
+          minItems: 1
           items:
-            $ref: '#/components/schemas/DatasetSummary'
-        total:
-          type: integer
-        limit:
-          type: integer
-        offset:
-          type: integer
+            type: object
+            required: [zone, price_usd]
+            properties:
+              zone:
+                type: string
+                minLength: 2
+                maxLength: 100
+                example: CABA
+              price_usd:
+                type: number
+                minimum: 0
+                example: 29.99
 
-    CreateDatasetRequest:
+    # ── Orders ───────────────────────────────────────────────────
+
+    CreateOrderRequest:
       type: object
-      required: [title, category, zone, price_usd]
+      required: [offer_id, zone, format]
       properties:
-        title:
+        offer_id:
           type: string
-          minLength: 3
-          maxLength: 200
-        description:
-          type: string
-          maxLength: 2000
-        category:
-          type: string
-          minLength: 2
-          maxLength: 100
+          format: uuid
         zone:
           type: string
           minLength: 2
           maxLength: 100
-        price_usd:
-          type: number
-          minimum: 0
-          example: 29.99
-        is_published:
-          type: boolean
-          default: false
+          example: CABA
+        format:
+          type: string
+          enum: [csv, excel, json]
+          example: csv
 
-    UpdateDatasetRequest:
+    CreateOrderResponse:
       type: object
+      required: [order_id, client_secret, total_usd]
       properties:
-        title:
+        order_id:
           type: string
-          minLength: 3
-          maxLength: 200
-        description:
+          format: uuid
+        client_secret:
           type: string
-          maxLength: 2000
-        price_usd:
+          description: Stripe PaymentIntent client secret for frontend payment completion
+        total_usd:
           type: number
-          minimum: 0
-        is_published:
-          type: boolean
+          example: 29.99
 
-    # ── Businesses ──────────────────────────────────────────────
+    OrderResponse:
+      type: object
+      required: [id, offer_id, zone, format, status, total_usd, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        offer_id:
+          type: string
+          format: uuid
+        offer_title:
+          type: string
+          example: Restaurants
+        zone:
+          type: string
+          example: CABA
+        format:
+          type: string
+          enum: [csv, excel, json]
+        status:
+          type: string
+          enum: [pending, paid, scraping, completed, failed, refunded]
+        total_usd:
+          type: number
+        created_at:
+          type: string
+          format: date-time
+        paid_at:
+          type: string
+          format: date-time
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    OrderDetailResponse:
+      allOf:
+        - $ref: '#/components/schemas/OrderResponse'
+        - type: object
+          properties:
+            scraping_job:
+              $ref: '#/components/schemas/ScrapingJobResponse'
+              nullable: true
+
+    # ── Businesses ───────────────────────────────────────────────
 
     BusinessRecord:
       type: object
@@ -602,84 +786,7 @@ components:
           type: integer
           example: 842
 
-    # ── Orders ──────────────────────────────────────────────────
-
-    CreateOrderRequest:
-      type: object
-      required: [dataset_ids]
-      properties:
-        dataset_ids:
-          type: array
-          minItems: 1
-          items:
-            type: string
-            format: uuid
-          example: ["550e8400-e29b-41d4-a716-446655440000"]
-
-    CreateOrderResponse:
-      type: object
-      required: [order_id, client_secret, total_usd]
-      properties:
-        order_id:
-          type: string
-          format: uuid
-        client_secret:
-          type: string
-          description: Stripe PaymentIntent client secret for frontend payment completion
-        total_usd:
-          type: number
-          example: 59.98
-
-    OrderResponse:
-      type: object
-      required: [id, status, total_usd, created_at]
-      properties:
-        id:
-          type: string
-          format: uuid
-        status:
-          type: string
-          enum: [pending, paid, failed, refunded]
-        total_usd:
-          type: number
-        created_at:
-          type: string
-          format: date-time
-        paid_at:
-          type: string
-          format: date-time
-          nullable: true
-
-    OrderDetailResponse:
-      allOf:
-        - $ref: '#/components/schemas/OrderResponse'
-        - type: object
-          properties:
-            items:
-              type: array
-              items:
-                $ref: '#/components/schemas/OrderItemResponse'
-
-    OrderItemResponse:
-      type: object
-      required: [id, dataset_id, price_usd]
-      properties:
-        id:
-          type: string
-          format: uuid
-        dataset_id:
-          type: string
-          format: uuid
-        dataset_title:
-          type: string
-        price_usd:
-          type: number
-        downloaded_at:
-          type: string
-          format: date-time
-          nullable: true
-
-    # ── Scraping Jobs ────────────────────────────────────────────
+    # ── Scraping Jobs ─────────────────────────────────────────────
 
     CreateScrapingJobRequest:
       type: object
@@ -727,7 +834,7 @@ components:
           type: string
           format: date-time
 
-    # ── Shared ───────────────────────────────────────────────────
+    # ── Shared ────────────────────────────────────────────────────
 
     ErrorResponse:
       type: object
@@ -735,4 +842,4 @@ components:
       properties:
         error:
           type: string
-          example: Dataset not found
+          example: Offer not found
