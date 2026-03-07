@@ -53,6 +53,12 @@ Resources:
         Variables:
           GOOGLE_MAPS_API_KEY: "{{resolve:ssm:/scrappy/google-maps-api-key}}"
 
+  ScrapingNormalizerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: lambdas.scraping_normalizer_handler.handler
+      Timeout: 60
+
   ScrapingSaverFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -73,6 +79,7 @@ Resources:
       DefinitionSubstitutions:
         ScrapingInitFunctionArn: !GetAtt ScrapingInitFunction.Arn
         ScrapingScraperFunctionArn: !GetAtt ScrapingScraperFunction.Arn
+        ScrapingNormalizerFunctionArn: !GetAtt ScrapingNormalizerFunction.Arn
         ScrapingSaverFunctionArn: !GetAtt ScrapingSaverFunction.Arn
         ScrapingMarkFailedFunctionArn: !GetAtt ScrapingMarkFailedFunction.Arn
       Policies:
@@ -80,6 +87,8 @@ Resources:
             FunctionName: !Ref ScrapingInitFunction
         - LambdaInvokePolicy:
             FunctionName: !Ref ScrapingScraperFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref ScrapingNormalizerFunction
         - LambdaInvokePolicy:
             FunctionName: !Ref ScrapingSaverFunction
         - LambdaInvokePolicy:

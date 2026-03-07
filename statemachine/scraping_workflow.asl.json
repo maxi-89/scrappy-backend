@@ -30,6 +30,18 @@
           "BackoffRate": 2.0
         }
       ],
+      "Next": "NormalizeBusinesses",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "MarkFailed",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    "NormalizeBusinesses": {
+      "Type": "Task",
+      "Resource": "${ScrapingNormalizerFunctionArn}",
       "Next": "SaveBusinesses",
       "Catch": [
         {
