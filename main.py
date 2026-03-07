@@ -1,3 +1,7 @@
+from dotenv import load_dotenv
+
+load_dotenv()  # No-op in cloud environments where vars are already set
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from mangum import Mangum
