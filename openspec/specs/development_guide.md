@@ -139,15 +139,84 @@ uv run mypy app/
 
 ### 8. Deploy to AWS Lambda
 
-```bash
-# Package and deploy (using AWS SAM or Serverless Framework)
-uv run python scripts/build_lambda.py
+Deployment is automated via **GitHub Actions** triggered by version tags on `master`.
 
-# Or with Serverless Framework
-npx serverless deploy --stage dev
+#### Release flow
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
 ```
 
-After deploying, the CLI outputs the API Gateway endpoint URL.
+The pipeline (`.github/workflows/deploy.yml`) runs in two sequential jobs:
+
+1. **test** — ruff, mypy, pytest (quality gate)
+2. **deploy** — Docker build → push to ECR → `aws lambda update-function-code`
+
+#### AWS resources required (one-time setup)
+
+| Resource | Description |
+|---|---|
+| ECR repository | `scrappy-backend` — stores container images |
+| Lambda function | Container image type, handler `main.handler` |
+| IAM role (OIDC) | GitHub Actions OIDC trust, ECR + Lambda permissions |
+| API Gateway (HTTP API) | Routes public traffic to the Lambda function |
+
+#### Create ECR repository
+
+```bash
+aws ecr create-repository \
+  --repository-name scrappy-backend \
+  --region us-east-1
+```
+
+#### Lambda environment variables
+
+Set these directly in the Lambda function configuration (never in the Docker image):
+
+```
+DATABASE_URL           postgresql+asyncpg://...  (Supabase connection string)
+AUTH0_DOMAIN           your-tenant.us.auth0.com
+AUTH0_AUDIENCE         https://api.scrappy.io
+STRIPE_SECRET_KEY      sk_live_...
+STRIPE_WEBHOOK_SECRET  whsec_...
+ADMIN_API_KEY          <secret>
+ENVIRONMENT            production
+```
+
+#### GitHub repository secret
+
+```
+AWS_DEPLOY_ROLE_ARN    arn:aws:iam::<account-id>:role/scrappy-deploy
+```
+
+#### IAM role trust policy (GitHub OIDC)
+
+```json
+{
+  "Effect": "Allow",
+  "Principal": {
+    "Federated": "arn:aws:iam::<account-id>:oidc-provider/token.actions.githubusercontent.com"
+  },
+  "Action": "sts:AssumeRoleWithWebIdentity",
+  "Condition": {
+    "StringEquals": {
+      "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+    },
+    "StringLike": {
+      "token.actions.githubusercontent.com:sub": "repo:maxi-89/scrappy-backend:*"
+    }
+  }
+}
+```
+
+#### IAM role permissions
+
+- `ecr:GetAuthorizationToken` (global)
+- `ecr:BatchGetImage`, `ecr:BatchCheckLayerAvailability`, `ecr:PutImage`, `ecr:InitiateLayerUpload`, `ecr:UploadLayerPart`, `ecr:CompleteLayerUpload` on the `scrappy-backend` ECR repo
+- `lambda:UpdateFunctionCode`, `lambda:GetFunction`, `lambda:GetFunctionConfiguration` on the `scrappy-backend` Lambda function
+
+After the first deploy, the API Gateway endpoint URL is the public URL of the backend.
 
 ### 9. Backend Project Structure
 
