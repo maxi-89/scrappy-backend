@@ -1,0 +1,183 @@
+# Data Model — Scrappy
+
+## Overview
+
+Scrappy uses **Supabase (PostgreSQL)** as its primary database. All tables follow a relational model with UUID primary keys, timestamptz timestamps, and snake_case naming.
+
+> **Source of truth**: This file must be kept in sync with Alembic migrations and ORM models. Update it whenever a table, column, or index changes.
+
+---
+
+## Tables
+
+### `businesses`
+
+Raw scraped business records obtained from Google Maps.
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| `id` | `uuid` | PK, default `gen_random_uuid()` | Unique business record ID |
+| `name` | `text` | NOT NULL | Business name |
+| `category` | `text` | NOT NULL | Business category (e.g. `restaurants`, `clinics`) |
+| `zone` | `text` | NOT NULL | Geographic zone (e.g. `CABA`, `Palermo`) |
+| `address` | `text` | | Full address |
+| `phone` | `text` | | Phone number |
+| `website` | `text` | | Website URL |
+| `google_maps_url` | `text` | | Google Maps listing URL |
+| `rating` | `numeric(2,1)` | | Rating 0.0–5.0 |
+| `review_count` | `integer` | default 0 | Number of Google reviews |
+| `is_verified` | `boolean` | default false | Data quality flag |
+| `scraped_at` | `timestamptz` | NOT NULL | When the record was scraped |
+| `created_at` | `timestamptz` | NOT NULL, default `now()` | Record creation time |
+
+**Indexes**: `category`, `zone`, `(category, zone)`
+
+---
+
+### `scraping_jobs`
+
+Tracks background scraping tasks.
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| `id` | `uuid` | PK, default `gen_random_uuid()` | Job ID |
+| `category` | `text` | NOT NULL | Target category to scrape |
+| `zone` | `text` | NOT NULL | Target geographic zone |
+| `status` | `text` | NOT NULL | `pending` \| `running` \| `completed` \| `failed` |
+| `records_scraped` | `integer` | default 0 | Number of records collected |
+| `error_message` | `text` | | Error details if failed |
+| `started_at` | `timestamptz` | | When job started running |
+| `finished_at` | `timestamptz` | | When job completed or failed |
+| `created_at` | `timestamptz` | NOT NULL, default `now()` | Job creation time |
+
+**Indexes**: `status`, `(category, zone)`
+
+---
+
+### `datasets`
+
+Curated, purchasable collections of business records.
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| `id` | `uuid` | PK, default `gen_random_uuid()` | Dataset ID |
+| `title` | `text` | NOT NULL | Display title (e.g. `"Restaurants CABA 2025"`) |
+| `description` | `text` | | Markdown description shown to buyers |
+| `category` | `text` | NOT NULL | Primary business category |
+| `zone` | `text` | NOT NULL | Primary geographic zone |
+| `record_count` | `integer` | NOT NULL, default 0 | Number of business records included |
+| `price_usd` | `numeric(10,2)` | NOT NULL | Sale price in USD |
+| `is_published` | `boolean` | NOT NULL, default false | Visible to buyers only when true |
+| `sample_data` | `jsonb` | | Up to 5 sample records for preview |
+| `created_at` | `timestamptz` | NOT NULL, default `now()` | Creation timestamp |
+| `updated_at` | `timestamptz` | NOT NULL, default `now()` | Last update timestamp |
+
+**Indexes**: `category`, `zone`, `is_published`
+
+---
+
+### `dataset_businesses`
+
+Join table linking datasets to business records (many-to-many).
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| `dataset_id` | `uuid` | FK → `datasets.id` ON DELETE CASCADE | Dataset reference |
+| `business_id` | `uuid` | FK → `businesses.id` ON DELETE CASCADE | Business reference |
+
+**Primary key**: `(dataset_id, business_id)`
+
+---
+
+### `users`
+
+Registered buyers.
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| `id` | `uuid` | PK, default `gen_random_uuid()` | User ID (matches Supabase Auth UID) |
+| `email` | `text` | NOT NULL, UNIQUE | User email |
+| `full_name` | `text` | | Full name |
+| `created_at` | `timestamptz` | NOT NULL, default `now()` | Registration timestamp |
+
+> Auth is managed by **Supabase Auth**. The `users` table mirrors `auth.users` for application-level data.
+
+---
+
+### `orders`
+
+Purchase records for datasets.
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| `id` | `uuid` | PK, default `gen_random_uuid()` | Order ID |
+| `user_id` | `uuid` | NOT NULL, FK → `users.id` | Buyer |
+| `status` | `text` | NOT NULL | `pending` \| `paid` \| `failed` \| `refunded` |
+| `total_usd` | `numeric(10,2)` | NOT NULL | Total amount charged |
+| `stripe_payment_intent_id` | `text` | UNIQUE | Stripe payment reference |
+| `created_at` | `timestamptz` | NOT NULL, default `now()` | Order creation time |
+| `paid_at` | `timestamptz` | | Payment confirmation time |
+
+**Indexes**: `user_id`, `status`
+
+---
+
+### `order_items`
+
+Datasets included in an order (one order can have multiple datasets).
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| `id` | `uuid` | PK, default `gen_random_uuid()` | Item ID |
+| `order_id` | `uuid` | NOT NULL, FK → `orders.id` ON DELETE CASCADE | Parent order |
+| `dataset_id` | `uuid` | NOT NULL, FK → `datasets.id` | Dataset purchased |
+| `price_usd` | `numeric(10,2)` | NOT NULL | Price at time of purchase (snapshot) |
+| `download_token` | `text` | UNIQUE | Secure one-time download token |
+| `downloaded_at` | `timestamptz` | | When buyer first downloaded |
+
+**Indexes**: `order_id`, `download_token`
+
+---
+
+## Entity Relationships
+
+```
+scraping_jobs ──────────────────────────────────── (independent)
+
+businesses ◄──── dataset_businesses ────► datasets
+                                              │
+                                         order_items
+                                              │
+                                           orders
+                                              │
+                                           users
+```
+
+---
+
+## Access Patterns
+
+| Pattern | Table | Filter |
+|---|---|---|
+| List published datasets by category | `datasets` | `is_published = true AND category = ?` |
+| List datasets by zone | `datasets` | `is_published = true AND zone = ?` |
+| Get dataset with sample data | `datasets` | `id = ?` |
+| Get all businesses in a dataset | `dataset_businesses JOIN businesses` | `dataset_id = ?` |
+| Get orders for a user | `orders` | `user_id = ?` |
+| Get items in an order | `order_items` | `order_id = ?` |
+| Validate download token | `order_items` | `download_token = ?` |
+| List businesses by category+zone | `businesses` | `category = ? AND zone = ?` |
+
+---
+
+## Key Design Conventions
+
+- All primary keys use **UUID** (`gen_random_uuid()`)
+- All tables include `created_at timestamptz NOT NULL DEFAULT now()`
+- All mutable tables include `updated_at timestamptz NOT NULL DEFAULT now()` with an update trigger
+- Snake_case for all table and column names
+- Prices stored as `numeric(10,2)` — never float in financial columns
+- Status fields use `text` with application-level enum validation (not PG enums, for easier migration)
+- Foreign keys always define explicit `ON DELETE` behavior
+- `sample_data` stored as `jsonb` to avoid separate query for previews
+- Download tokens generated as cryptographically secure random strings (32 bytes, hex-encoded)

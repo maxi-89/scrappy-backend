@@ -1,0 +1,673 @@
+---
+description: Backend development standards, best practices, and conventions for Scrappy — a FastAPI application running on AWS Lambda (via Mangum) with Supabase (PostgreSQL), Domain-Driven Design, and clean architecture.
+globs: ["app/**/*.py", "tests/**/*.py", "pyproject.toml", "Makefile", "*.env*"]
+alwaysApply: true
+---
+
+# Backend Standards — FastAPI · Python · Supabase
+
+## Table of Contents
+
+- [Technology Stack](#technology-stack)
+- [Architecture Overview](#architecture-overview)
+- [Project Structure](#project-structure)
+- [Domain-Driven Design](#domain-driven-design)
+- [FastAPI Routers (Presentation Layer)](#fastapi-routers-presentation-layer)
+- [Application Layer](#application-layer)
+- [Domain Layer](#domain-layer)
+- [Infrastructure Layer](#infrastructure-layer)
+- [Supabase / PostgreSQL Patterns](#supabase--postgresql-patterns)
+- [Error Handling](#error-handling)
+- [Validation](#validation)
+- [Testing Standards](#testing-standards)
+- [Deployment (Lambda + Mangum)](#deployment-lambda--mangum)
+- [Python Standards](#python-standards)
+- [Git Workflow](#git-workflow)
+
+---
+
+## Technology Stack
+
+| Concern | Technology |
+|---|---|
+| Runtime | Python 3.12 |
+| Language | Python (strict typing with mypy) |
+| Framework | FastAPI |
+| ASGI Adapter | Mangum (AWS Lambda) |
+| Database | Supabase (PostgreSQL via SQLAlchemy 2.0) |
+| ORM | SQLAlchemy 2.0 (async) |
+| Validation | Pydantic v2 |
+| Testing | pytest + pytest-asyncio |
+| Linting | ruff + mypy |
+| Dependency mgmt | uv (pyproject.toml) |
+
+---
+
+## Architecture Overview
+
+The backend follows a **layered DDD architecture** adapted for FastAPI:
+
+```
+app/
+├── domain/           # Business logic, entities, value objects, repository interfaces
+├── application/      # Use cases, services — orchestrates domain
+├── infrastructure/   # SQLAlchemy repos, Supabase client, external adapters
+└── presentation/     # FastAPI routers — thin entry points, delegate to application layer
+```
+
+**Dependency rule**: outer layers depend on inner layers. Domain has zero dependencies on infrastructure or FastAPI.
+
+```
+presentation → application → domain ← infrastructure
+```
+
+---
+
+## Project Structure
+
+```
+backend/
+├── app/
+│   ├── domain/
+│   │   ├── models/              # Domain entities and value objects
+│   │   └── repositories/        # Repository interfaces (i_foo_repository.py)
+│   ├── application/
+│   │   └── services/            # Application services (foo_service.py)
+│   ├── infrastructure/
+│   │   ├── database/            # SQLAlchemy engine, session, ORM models
+│   │   ├── repositories/        # Repository implementations
+│   │   └── errors/              # AppError, ValidationError
+│   └── presentation/
+│       └── routers/             # FastAPI route handlers (foo_router.py)
+├── tests/
+│   ├── unit/
+│   └── integration/
+├── main.py                      # FastAPI app entry point + Mangum handler
+├── pyproject.toml
+├── .env.example
+└── Makefile
+```
+
+---
+
+## Domain-Driven Design
+
+### Entities
+
+Domain entities are plain Python dataclasses or Pydantic BaseModel subclasses. They must be **framework-agnostic** — no SQLAlchemy, no FastAPI, no HTTP.
+
+```python
+# app/domain/models/dataset.py
+from dataclasses import dataclass
+from datetime import datetime
+
+
+@dataclass
+class Dataset:
+    id: str
+    title: str
+    category: str
+    zone: str
+    record_count: int
+    price_usd: float
+    created_at: datetime
+```
+
+Use classes with behavior when the entity has invariants to enforce:
+
+```python
+@dataclass
+class Dataset:
+    id: str
+    title: str
+    price_usd: float
+
+    def __post_init__(self) -> None:
+        if self.price_usd < 0:
+            raise ValueError("price_usd must be non-negative")
+        if not self.title.strip():
+            raise ValueError("title is required")
+```
+
+### Repository Interfaces
+
+Define repository contracts in the **domain layer**. Infrastructure implements them.
+
+```python
+# app/domain/repositories/i_dataset_repository.py
+from abc import ABC, abstractmethod
+from app.domain.models.dataset import Dataset
+
+
+class IDatasetRepository(ABC):
+    @abstractmethod
+    async def save(self, dataset: Dataset) -> None: ...
+
+    @abstractmethod
+    async def find_by_id(self, dataset_id: str) -> Dataset | None: ...
+
+    @abstractmethod
+    async def find_all(self, category: str | None = None, zone: str | None = None) -> list[Dataset]: ...
+```
+
+### Value Objects
+
+```python
+# app/domain/models/value_objects.py
+import re
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Email:
+    value: str
+
+    def __post_init__(self) -> None:
+        normalized = self.value.strip().lower()
+        if not re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", normalized):
+            raise ValueError("Invalid email address")
+        object.__setattr__(self, "value", normalized)
+```
+
+---
+
+## FastAPI Routers (Presentation Layer)
+
+Routers are **thin entry points**. Their only responsibilities:
+1. Declare the HTTP route and request/response schemas
+2. Call the application service
+3. Return a properly formatted HTTP response
+
+```python
+# app/presentation/routers/datasets_router.py
+from fastapi import APIRouter, Depends, HTTPException, status
+from app.application.services.dataset_service import DatasetService
+from app.presentation.schemas.dataset_schemas import DatasetResponse, CreateDatasetRequest
+from app.infrastructure.dependencies import get_dataset_service
+
+router = APIRouter(prefix="/datasets", tags=["datasets"])
+
+
+@router.get("/", response_model=list[DatasetResponse])
+async def list_datasets(
+    category: str | None = None,
+    zone: str | None = None,
+    service: DatasetService = Depends(get_dataset_service),
+) -> list[DatasetResponse]:
+    return await service.list_datasets(category=category, zone=zone)
+
+
+@router.get("/{dataset_id}", response_model=DatasetResponse)
+async def get_dataset(
+    dataset_id: str,
+    service: DatasetService = Depends(get_dataset_service),
+) -> DatasetResponse:
+    dataset = await service.get_dataset(dataset_id)
+    if dataset is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dataset not found")
+    return dataset
+```
+
+**Rules:**
+- No business logic in routers
+- Use `Depends()` for service injection
+- Use `response_model` for all endpoints
+- Raise `HTTPException` for HTTP-specific errors (404, 403, etc.)
+- Never import SQLAlchemy or database clients in routers
+
+---
+
+## Application Layer
+
+Application services orchestrate domain logic. They:
+- Receive typed input (Pydantic schemas or plain dicts)
+- Validate input and enforce business rules
+- Call repository interfaces
+- Return typed output (domain entities or plain dicts)
+
+```python
+# app/application/services/dataset_service.py
+import uuid
+from datetime import datetime, UTC
+from app.domain.models.dataset import Dataset
+from app.domain.repositories.i_dataset_repository import IDatasetRepository
+from app.presentation.schemas.dataset_schemas import DatasetResponse, CreateDatasetRequest
+
+
+class DatasetService:
+    def __init__(self, repository: IDatasetRepository) -> None:
+        self._repository = repository
+
+    async def list_datasets(
+        self, category: str | None = None, zone: str | None = None
+    ) -> list[DatasetResponse]:
+        datasets = await self._repository.find_all(category=category, zone=zone)
+        return [DatasetResponse.model_validate(d.__dict__) for d in datasets]
+
+    async def get_dataset(self, dataset_id: str) -> DatasetResponse | None:
+        dataset = await self._repository.find_by_id(dataset_id)
+        if dataset is None:
+            return None
+        return DatasetResponse.model_validate(dataset.__dict__)
+
+    async def create_dataset(self, payload: CreateDatasetRequest) -> DatasetResponse:
+        dataset = Dataset(
+            id=str(uuid.uuid4()),
+            title=payload.title,
+            category=payload.category,
+            zone=payload.zone,
+            record_count=0,
+            price_usd=payload.price_usd,
+            created_at=datetime.now(UTC),
+        )
+        await self._repository.save(dataset)
+        return DatasetResponse.model_validate(dataset.__dict__)
+```
+
+**Rules:**
+- Services must not import `fastapi`, `sqlalchemy`, or Supabase SDK directly
+- Each method has a single responsibility
+- Return types must be fully typed (no `Any`)
+- Use constructor injection for dependencies
+
+---
+
+## Infrastructure Layer
+
+### Database Session (SQLAlchemy async)
+
+```python
+# app/infrastructure/database/session.py
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+import os
+
+DATABASE_URL = os.environ["DATABASE_URL"]  # Supabase connection string (asyncpg)
+
+engine = create_async_engine(DATABASE_URL, echo=False)
+AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
+
+
+async def get_db_session() -> AsyncSession:
+    async with AsyncSessionLocal() as session:
+        yield session
+```
+
+### ORM Models
+
+```python
+# app/infrastructure/database/orm_models.py
+from sqlalchemy import String, Float, Integer, DateTime, func
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from datetime import datetime
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class DatasetORM(Base):
+    __tablename__ = "datasets"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    category: Mapped[str] = mapped_column(String, nullable=False)
+    zone: Mapped[str] = mapped_column(String, nullable=False)
+    record_count: Mapped[int] = mapped_column(Integer, default=0)
+    price_usd: Mapped[float] = mapped_column(Float, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+```
+
+### Repository Implementation
+
+```python
+# app/infrastructure/repositories/dataset_repository.py
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from app.domain.models.dataset import Dataset
+from app.domain.repositories.i_dataset_repository import IDatasetRepository
+from app.infrastructure.database.orm_models import DatasetORM
+
+
+class DatasetRepository(IDatasetRepository):
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def save(self, dataset: Dataset) -> None:
+        orm_obj = DatasetORM(
+            id=dataset.id,
+            title=dataset.title,
+            category=dataset.category,
+            zone=dataset.zone,
+            record_count=dataset.record_count,
+            price_usd=dataset.price_usd,
+            created_at=dataset.created_at,
+        )
+        self._session.add(orm_obj)
+        await self._session.commit()
+
+    async def find_by_id(self, dataset_id: str) -> Dataset | None:
+        result = await self._session.execute(
+            select(DatasetORM).where(DatasetORM.id == dataset_id)
+        )
+        row = result.scalar_one_or_none()
+        if row is None:
+            return None
+        return self._map_to_domain(row)
+
+    async def find_all(self, category: str | None = None, zone: str | None = None) -> list[Dataset]:
+        stmt = select(DatasetORM)
+        if category:
+            stmt = stmt.where(DatasetORM.category == category)
+        if zone:
+            stmt = stmt.where(DatasetORM.zone == zone)
+        result = await self._session.execute(stmt)
+        return [self._map_to_domain(row) for row in result.scalars().all()]
+
+    def _map_to_domain(self, row: DatasetORM) -> Dataset:
+        return Dataset(
+            id=row.id,
+            title=row.title,
+            category=row.category,
+            zone=row.zone,
+            record_count=row.record_count,
+            price_usd=row.price_usd,
+            created_at=row.created_at,
+        )
+```
+
+### Dependency Injection
+
+```python
+# app/infrastructure/dependencies.py
+from fastapi import Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.infrastructure.database.session import get_db_session
+from app.infrastructure.repositories.dataset_repository import DatasetRepository
+from app.application.services.dataset_service import DatasetService
+
+
+def get_dataset_service(session: AsyncSession = Depends(get_db_session)) -> DatasetService:
+    return DatasetService(DatasetRepository(session))
+```
+
+---
+
+## Supabase / PostgreSQL Patterns
+
+### Key conventions
+
+- Use **UUID** as primary key for all tables (`gen_random_uuid()` default)
+- Always include `created_at` (timestamptz, `now()`) and `updated_at` (auto-updated)
+- Use **snake_case** for all column and table names
+- Define foreign keys with explicit `ON DELETE` behavior
+- Use database-level indexes for frequently filtered columns (e.g., `category`, `zone`)
+- Never hardcode connection strings — always read from `DATABASE_URL` env var
+
+### Migrations
+
+Use Alembic for schema migrations:
+
+```bash
+# Generate a migration
+alembic revision --autogenerate -m "add datasets table"
+
+# Apply migrations
+alembic upgrade head
+```
+
+All migrations must be committed to the repo. Never mutate the schema manually in production.
+
+---
+
+## Error Handling
+
+### Error Classes
+
+```python
+# app/infrastructure/errors/app_error.py
+class AppError(Exception):
+    def __init__(self, message: str, status_code: int = 500) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+# app/infrastructure/errors/validation_error.py
+class DomainValidationError(Exception):
+    pass
+```
+
+### Global Exception Handler
+
+```python
+# main.py
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from app.infrastructure.errors.app_error import AppError
+from app.infrastructure.errors.validation_error import DomainValidationError
+
+app = FastAPI()
+
+@app.exception_handler(AppError)
+async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
+    return JSONResponse(status_code=exc.status_code, content={"error": str(exc)})
+
+@app.exception_handler(DomainValidationError)
+async def validation_error_handler(request: Request, exc: DomainValidationError) -> JSONResponse:
+    return JSONResponse(status_code=400, content={"error": str(exc)})
+```
+
+### HTTP Status Code Mapping
+
+| Error | Status |
+|---|---|
+| `DomainValidationError` | 400 |
+| `HTTPException` (not found) | 404 |
+| `AppError` (custom) | per `status_code` |
+| Unhandled | 500 |
+
+### Response Format
+
+All error responses follow this shape:
+```json
+{ "error": "Human-readable message" }
+```
+
+---
+
+## Validation
+
+Use **Pydantic v2** schemas in `app/presentation/schemas/` for HTTP input/output validation.
+
+```python
+# app/presentation/schemas/dataset_schemas.py
+from pydantic import BaseModel, Field, ConfigDict
+from datetime import datetime
+
+
+class CreateDatasetRequest(BaseModel):
+    title: str = Field(min_length=3, max_length=200)
+    category: str = Field(min_length=2, max_length=100)
+    zone: str = Field(min_length=2, max_length=100)
+    price_usd: float = Field(ge=0)
+
+
+class DatasetResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    title: str
+    category: str
+    zone: str
+    record_count: int
+    price_usd: float
+    created_at: datetime
+```
+
+**Rules:**
+- Pydantic schemas live in the presentation layer — domain entities are not Pydantic models
+- Use `Field` for constraints instead of manual validation where possible
+- Use `model_config = ConfigDict(from_attributes=True)` for ORM-to-schema mapping
+- Domain-level invariants live in the domain entity `__post_init__`, not in schemas
+
+---
+
+## Testing Standards
+
+### Coverage Threshold
+
+Minimum 90% for branches, functions, and statements.
+
+### Structure
+
+```
+tests/
+├── unit/
+│   ├── domain/
+│   ├── application/
+│   └── infrastructure/
+└── integration/        # Tests against a real test database (Supabase test project or local PG)
+```
+
+### Unit Test Pattern (pytest + AAA)
+
+```python
+# tests/unit/application/test_dataset_service.py
+import pytest
+from unittest.mock import AsyncMock, MagicMock
+from app.application.services.dataset_service import DatasetService
+from app.domain.models.dataset import Dataset
+from datetime import datetime, UTC
+
+
+@pytest.fixture
+def mock_repository() -> AsyncMock:
+    repo = AsyncMock()
+    return repo
+
+
+@pytest.fixture
+def service(mock_repository: AsyncMock) -> DatasetService:
+    return DatasetService(mock_repository)
+
+
+@pytest.mark.asyncio
+async def test_get_dataset_returns_none_when_not_found(
+    service: DatasetService, mock_repository: AsyncMock
+) -> None:
+    # Arrange
+    mock_repository.find_by_id.return_value = None
+
+    # Act
+    result = await service.get_dataset("non-existent-id")
+
+    # Assert
+    assert result is None
+    mock_repository.find_by_id.assert_called_once_with("non-existent-id")
+
+
+@pytest.mark.asyncio
+async def test_create_dataset_saves_and_returns_response(
+    service: DatasetService, mock_repository: AsyncMock
+) -> None:
+    # Arrange
+    from app.presentation.schemas.dataset_schemas import CreateDatasetRequest
+    payload = CreateDatasetRequest(
+        title="Restaurants CABA", category="restaurants", zone="CABA", price_usd=29.99
+    )
+    mock_repository.save.return_value = None
+
+    # Act
+    result = await service.create_dataset(payload)
+
+    # Assert
+    assert result.title == "Restaurants CABA"
+    assert result.price_usd == 29.99
+    mock_repository.save.assert_called_once()
+```
+
+### Router Test Pattern
+
+```python
+# tests/unit/presentation/test_datasets_router.py
+import pytest
+from httpx import AsyncClient, ASGITransport
+from unittest.mock import AsyncMock
+from main import app
+from app.infrastructure.dependencies import get_dataset_service
+
+
+@pytest.mark.asyncio
+async def test_get_dataset_returns_404_when_not_found() -> None:
+    mock_service = AsyncMock()
+    mock_service.get_dataset.return_value = None
+
+    app.dependency_overrides[get_dataset_service] = lambda: mock_service
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/datasets/non-existent-id")
+
+    assert response.status_code == 404
+    app.dependency_overrides.clear()
+```
+
+---
+
+## Deployment (Lambda + Mangum)
+
+### main.py entry point
+
+```python
+# main.py
+from fastapi import FastAPI
+from mangum import Mangum
+from app.presentation.routers import datasets_router, orders_router
+
+app = FastAPI(title="Scrappy API", version="1.0.0")
+
+app.include_router(datasets_router.router)
+app.include_router(orders_router.router)
+
+# AWS Lambda handler
+handler = Mangum(app, lifespan="off")
+```
+
+### Lambda function_url or API Gateway
+
+- Use `Mangum` as the Lambda handler (`handler = Mangum(app)`)
+- Deploy via AWS SAM, Serverless Framework, or manual zip upload
+- Environment variables set in Lambda configuration (never hardcoded)
+
+### Required environment variables
+
+```env
+DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/scrappy
+SUPABASE_URL=https://xxx.supabase.co
+SUPABASE_ANON_KEY=xxx
+JWT_SECRET=xxx
+ENVIRONMENT=production
+```
+
+---
+
+## Python Standards
+
+- Python 3.12+ syntax (use `str | None` instead of `Optional[str]`)
+- `mypy --strict` must pass with zero errors
+- `ruff` for linting and formatting (replaces black + flake8 + isort)
+- No `Any` — use `object` or proper generics
+- All function signatures must have type annotations (parameters + return type)
+- Use `dataclasses.dataclass` for domain entities, Pydantic for I/O schemas
+- Prefer `async def` throughout — no blocking I/O in async context
+- Constants use `UPPER_SNAKE_CASE`, everything else `snake_case`
+
+---
+
+## Git Workflow
+
+- Branch naming: `feature/<ticket-id>-short-description`, `fix/<ticket-id>-short-description`
+- Commit message format: `<type>(<scope>): <description>` (Conventional Commits)
+  - Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
+  - Example: `feat(datasets): add GET /datasets endpoint`
+- One feature per branch, small focused commits
+- Always update `openspec/specs/api-spec.yml` when endpoints change
+- Always update `openspec/specs/data-model.md` when the database schema changes
