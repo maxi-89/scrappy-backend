@@ -7,7 +7,7 @@ from httpx import ASGITransport, AsyncClient
 from app.infrastructure.dependencies import (
     get_admin_key,
     get_scraping_job_service,
-    get_scraping_worker,
+    get_sfn_client,
 )
 from app.presentation.schemas.scraping_job_schemas import ScrapingJobResponse
 from main import app
@@ -48,10 +48,10 @@ def mock_service() -> AsyncMock:
 
 
 @pytest.fixture
-def mock_worker() -> MagicMock:
-    worker = MagicMock()
-    worker.run_by_id = AsyncMock()
-    return worker
+def mock_sfn() -> MagicMock:
+    sfn = MagicMock()
+    sfn.start_execution = MagicMock()
+    return sfn
 
 
 # ---------------------------------------------------------------------------
@@ -59,11 +59,11 @@ def mock_worker() -> MagicMock:
 # ---------------------------------------------------------------------------
 
 
-async def test_create_job_returns_202(mock_service: AsyncMock, mock_worker: MagicMock) -> None:
+async def test_create_job_returns_202(mock_service: AsyncMock, mock_sfn: MagicMock) -> None:
     # Arrange
     app.dependency_overrides[get_admin_key] = _bypass_admin_key
     app.dependency_overrides[get_scraping_job_service] = lambda: mock_service
-    app.dependency_overrides[get_scraping_worker] = lambda: mock_worker
+    app.dependency_overrides[get_sfn_client] = lambda: mock_sfn
 
     # Act
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -82,12 +82,12 @@ async def test_create_job_returns_202(mock_service: AsyncMock, mock_worker: Magi
 
 
 async def test_create_job_missing_category_returns_422(
-    mock_service: AsyncMock, mock_worker: MagicMock
+    mock_service: AsyncMock, mock_sfn: MagicMock
 ) -> None:
     # Arrange
     app.dependency_overrides[get_admin_key] = _bypass_admin_key
     app.dependency_overrides[get_scraping_job_service] = lambda: mock_service
-    app.dependency_overrides[get_scraping_worker] = lambda: mock_worker
+    app.dependency_overrides[get_sfn_client] = lambda: mock_sfn
 
     # Act
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -101,12 +101,12 @@ async def test_create_job_missing_category_returns_422(
 
 
 async def test_create_job_missing_zone_returns_422(
-    mock_service: AsyncMock, mock_worker: MagicMock
+    mock_service: AsyncMock, mock_sfn: MagicMock
 ) -> None:
     # Arrange
     app.dependency_overrides[get_admin_key] = _bypass_admin_key
     app.dependency_overrides[get_scraping_job_service] = lambda: mock_service
-    app.dependency_overrides[get_scraping_worker] = lambda: mock_worker
+    app.dependency_overrides[get_sfn_client] = lambda: mock_sfn
 
     # Act
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -217,17 +217,17 @@ async def test_get_job_returns_404_when_not_found(mock_service: AsyncMock) -> No
 
 
 # ---------------------------------------------------------------------------
-# Background task scheduling
+# SFN execution trigger
 # ---------------------------------------------------------------------------
 
 
-async def test_create_job_schedules_background_task(mock_service: AsyncMock) -> None:
+async def test_create_job_starts_sfn_execution(mock_service: AsyncMock) -> None:
     # Arrange
-    mock_worker = MagicMock()
-    mock_worker.run_by_id = AsyncMock()
+    mock_sfn = MagicMock()
+    mock_sfn.start_execution = MagicMock()
     app.dependency_overrides[get_admin_key] = _bypass_admin_key
     app.dependency_overrides[get_scraping_job_service] = lambda: mock_service
-    app.dependency_overrides[get_scraping_worker] = lambda: mock_worker
+    app.dependency_overrides[get_sfn_client] = lambda: mock_sfn
 
     # Act
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -238,5 +238,4 @@ async def test_create_job_schedules_background_task(mock_service: AsyncMock) -> 
 
     # Assert
     assert response.status_code == 202
-    # BackgroundTasks runs after the response; worker.run_by_id is called with the job id
-    mock_worker.run_by_id.assert_called_once_with(_SAMPLE_RESPONSE.id)
+    mock_sfn.start_execution.assert_called_once_with(_SAMPLE_RESPONSE.id)

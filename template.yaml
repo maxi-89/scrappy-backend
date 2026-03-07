@@ -1,0 +1,94 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Description: Scrappy backend — FastAPI on Lambda + Step Functions scraping workflow
+
+Globals:
+  Function:
+    Runtime: python3.12
+    MemorySize: 512
+    Environment:
+      Variables:
+        DATABASE_URL: "{{resolve:ssm:/scrappy/database-url}}"
+
+Resources:
+
+  # ── API Lambda (FastAPI + Mangum) ─────────────────────────────────────────
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: main.handler
+      Timeout: 30
+      Policies:
+        - Statement:
+            Effect: Allow
+            Action: states:StartExecution
+            Resource: !Ref ScrapingStateMachine
+      Environment:
+        Variables:
+          STATE_MACHINE_ARN: !Ref ScrapingStateMachine
+          ADMIN_API_KEY: "{{resolve:ssm:/scrappy/admin-api-key}}"
+          AUTH0_DOMAIN: "{{resolve:ssm:/scrappy/auth0-domain}}"
+          AUTH0_AUDIENCE: "{{resolve:ssm:/scrappy/auth0-audience}}"
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            Path: /{proxy+}
+            Method: ANY
+
+  # ── Scraping Lambdas ──────────────────────────────────────────────────────
+  ScrapingInitFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: lambdas.scraping_init_handler.handler
+      Timeout: 30
+
+  ScrapingScraperFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: lambdas.scraping_scraper_handler.handler
+      Timeout: 300
+      Environment:
+        Variables:
+          GOOGLE_MAPS_API_KEY: "{{resolve:ssm:/scrappy/google-maps-api-key}}"
+
+  ScrapingSaverFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: lambdas.scraping_saver_handler.handler
+      Timeout: 60
+
+  ScrapingMarkFailedFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: lambdas.scraping_mark_failed_handler.handler
+      Timeout: 30
+
+  # ── State Machine ─────────────────────────────────────────────────────────
+  ScrapingStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      DefinitionUri: statemachine/scraping_workflow.asl.json
+      DefinitionSubstitutions:
+        ScrapingInitFunctionArn: !GetAtt ScrapingInitFunction.Arn
+        ScrapingScraperFunctionArn: !GetAtt ScrapingScraperFunction.Arn
+        ScrapingSaverFunctionArn: !GetAtt ScrapingSaverFunction.Arn
+        ScrapingMarkFailedFunctionArn: !GetAtt ScrapingMarkFailedFunction.Arn
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref ScrapingInitFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref ScrapingScraperFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref ScrapingSaverFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref ScrapingMarkFailedFunction
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway endpoint URL
+    Value: !Sub "https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+  StateMachineArn:
+    Description: Scraping State Machine ARN
+    Value: !Ref ScrapingStateMachine

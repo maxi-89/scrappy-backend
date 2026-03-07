@@ -1,0 +1,63 @@
+{
+  "Comment": "Scrappy async scraping workflow",
+  "StartAt": "InitJob",
+  "States": {
+    "InitJob": {
+      "Type": "Task",
+      "Resource": "${ScrapingInitFunctionArn}",
+      "Next": "ScrapeBusinesses",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "MarkFailed",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    "ScrapeBusinesses": {
+      "Type": "Task",
+      "Resource": "${ScrapingScraperFunctionArn}",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.TooManyRequestsException",
+            "Lambda.SdkClientException"
+          ],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Next": "SaveBusinesses",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "MarkFailed",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    "SaveBusinesses": {
+      "Type": "Task",
+      "Resource": "${ScrapingSaverFunctionArn}",
+      "Next": "Done",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "MarkFailed",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+    "MarkFailed": {
+      "Type": "Task",
+      "Resource": "${ScrapingMarkFailedFunctionArn}",
+      "Next": "Done"
+    },
+    "Done": {
+      "Type": "Succeed"
+    }
+  }
+}

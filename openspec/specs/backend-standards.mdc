@@ -641,11 +641,68 @@ handler = Mangum(app, lifespan="off")
 
 ```env
 DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/scrappy
-SUPABASE_URL=https://xxx.supabase.co
-SUPABASE_ANON_KEY=xxx
-JWT_SECRET=xxx
+ADMIN_API_KEY=...
+AUTH0_DOMAIN=...
+AUTH0_AUDIENCE=...
+GOOGLE_MAPS_API_KEY=...
+AWS_REGION=us-east-1
+STATE_MACHINE_ARN=arn:aws:states:...
 ENVIRONMENT=production
 ```
+
+---
+
+## Async Scraping — AWS Step Functions
+
+Long-running scraping tasks are orchestrated via **AWS Step Functions Standard Workflow** instead
+of FastAPI `BackgroundTasks`. The motivation: Mangum executes BackgroundTasks synchronously within
+the Lambda invocation, so API Gateway's 29-second timeout would be hit before scraping completes.
+
+### Architecture
+
+```
+POST /admin/scraping-jobs (API Lambda)
+  → create job (status=pending)
+  → sfn.start_execution(job_id)   ← asyncio.to_thread (boto3 sync)
+  → return 202 immediately
+
+Step Functions Standard Workflow:
+  InitJob       → status=running, started_at
+  ScrapeBusinesses → Google Maps Places API (retry x3 with exponential backoff)
+  SaveBusinesses   → bulk insert, status=completed
+  MarkFailed    → status=failed + error_message  (Catch target for all states)
+```
+
+### Lambda handlers
+
+Each state maps to a Lambda handler in `lambdas/`:
+
+| File | State | Input | Output |
+|---|---|---|---|
+| `scraping_init_handler.py` | InitJob | `{job_id}` | `{job_id, category, zone}` |
+| `scraping_scraper_handler.py` | ScrapeBusinesses | `{job_id, category, zone}` | `{job_id, businesses: [...]}` |
+| `scraping_saver_handler.py` | SaveBusinesses | `{job_id, businesses: [...]}` | `{job_id, records_saved}` |
+| `scraping_mark_failed_handler.py` | MarkFailed | `{job_id, error: {Error, Cause}}` | `{job_id}` |
+
+Each handler is a **synchronous Lambda entry point** (`handler(event, context)`) that calls
+`asyncio.run(_run(event))` internally.
+
+### SfnStarterClient
+
+The boto3 adapter lives in `app/infrastructure/aws/sfn_client.py`. It uses **lazy client
+initialization** (boto3 client created on first `start_execution` call) so that test environments
+without AWS credentials can instantiate the class without errors.
+
+### IaC
+
+Defined in `template.yaml` (AWS SAM). Deploy with:
+
+```bash
+sam build && sam deploy --guided   # first time
+sam build && sam deploy             # subsequent
+```
+
+Secrets injected via SSM Parameter Store (`{{resolve:ssm:/scrappy/...}}`), never hardcoded.
 
 ---
 

@@ -7,12 +7,9 @@ from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 
 import googlemaps
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.models.business import Business
 from app.domain.models.scraping_job import ScrapingJob
-from app.infrastructure.repositories.business_repository import BusinessRepository
-from app.infrastructure.repositories.scraping_job_repository import ScrapingJobRepository
 
 logger = logging.getLogger(__name__)
 
@@ -20,78 +17,14 @@ _MAX_PAGES = 3
 
 
 class ScrapingWorker:
-    def __init__(
-        self,
-        session_factory: async_sessionmaker[AsyncSession],
-        google_maps_api_key: str,
-    ) -> None:
-        self._session_factory = session_factory
+    def __init__(self, google_maps_api_key: str) -> None:
         self._api_key = google_maps_api_key
 
     # ------------------------------------------------------------------
-    # Public interface
+    # Public interface (called by Lambda handlers)
     # ------------------------------------------------------------------
 
-    async def run_by_id(self, job_id: str) -> None:
-        """Entry point for BackgroundTask. Fetches the job by ID, then runs."""
-        async with self._session_factory() as session:
-            job_repo = ScrapingJobRepository(session)
-            job = await job_repo.find_by_id(job_id)
-
-        if job is None:
-            logger.error("ScrapingWorker: job_id=%s not found", job_id)
-            return
-
-        await self.run(job)
-
-    async def run(self, job: ScrapingJob) -> None:
-        """
-        Full lifecycle:
-          1. Mark job as running
-          2. Fetch businesses from Google Maps
-          3. Persist businesses to DB
-          4. Mark job as completed / failed
-        Never re-raises — all exceptions are absorbed and recorded on the job.
-        """
-        await self._mark_running(job)
-
-        try:
-            businesses = await self._fetch_businesses(job)
-
-            async with self._session_factory() as session:
-                biz_repo = BusinessRepository(session)
-                await biz_repo.save_many(businesses)
-
-            job.status = "completed"
-            job.records_scraped = len(businesses)
-            job.finished_at = datetime.now(UTC)
-            async with self._session_factory() as session:
-                job_repo = ScrapingJobRepository(session)
-                await job_repo.update(job)
-
-            logger.info("ScrapingWorker completed job_id=%s records=%d", job.id, len(businesses))
-
-        except Exception as exc:
-            logger.exception("ScrapingWorker failed job_id=%s", job.id)
-            job.status = "failed"
-            job.error_message = str(exc)
-            job.finished_at = datetime.now(UTC)
-            async with self._session_factory() as session:
-                job_repo = ScrapingJobRepository(session)
-                await job_repo.update(job)
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    async def _mark_running(self, job: ScrapingJob) -> None:
-        job.status = "running"
-        job.started_at = datetime.now(UTC)
-        async with self._session_factory() as session:
-            job_repo = ScrapingJobRepository(session)
-            await job_repo.update(job)
-
-    async def _fetch_businesses(self, job: ScrapingJob) -> list[Business]:
+    async def fetch_businesses(self, job: ScrapingJob) -> list[Business]:
         """Call Google Maps Places API (Text Search + Place Details) and return domain objects."""
         gmaps: googlemaps.Client = googlemaps.Client(key=self._api_key)
         query = f"{job.category} in {job.zone}"
@@ -140,13 +73,13 @@ class ScrapingWorker:
             if not isinstance(detail, dict):
                 continue
 
-            business = self._map_to_domain(detail, job, scraped_at)
+            business = self.map_to_domain(detail, job, scraped_at)
             if business is not None:
                 businesses.append(business)
 
         return businesses
 
-    def _map_to_domain(
+    def map_to_domain(
         self,
         detail: dict[str, object],
         job: ScrapingJob,
