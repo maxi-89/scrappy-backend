@@ -95,6 +95,33 @@ class OrderService:
         orders = await self._order_repository.find_all(status)
         return [self._to_order_response(o) for o in orders]
 
+    async def list_all_orders_detailed(self, status: str | None = None) -> list[OrderDetailResponse]:
+        orders = await self._order_repository.find_all(status)
+        results = []
+        for order in orders:
+            scraping_job: ScrapingJob | None = None
+            if order.scraping_job_id and self._scraping_job_repository:
+                scraping_job = await self._scraping_job_repository.find_by_id(
+                    order.scraping_job_id
+                )
+            results.append(
+                OrderDetailResponse(
+                    id=order.id,
+                    offer_id=order.offer_id,
+                    zone=order.zone,
+                    format=order.format,
+                    status=order.status,
+                    total_usd=float(order.total_usd),
+                    created_at=order.created_at,
+                    paid_at=order.paid_at,
+                    completed_at=order.completed_at,
+                    scraping_job=self._to_scraping_job_schema(scraping_job)
+                    if scraping_job
+                    else None,
+                )
+            )
+        return results
+
     async def list_orders(self, user_id: str) -> list[OrderResponse]:
         orders = await self._order_repository.find_by_user(user_id)
         return [self._to_order_response(o) for o in orders]

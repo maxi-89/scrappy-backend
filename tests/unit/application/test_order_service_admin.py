@@ -72,7 +72,7 @@ def service(mock_order_repo: AsyncMock, mock_s3: MagicMock) -> OrderService:
 async def test_list_all_orders_returns_all(
     service: OrderService, mock_order_repo: AsyncMock
 ) -> None:
-    result = await service.list_all_orders()
+    result = await service.list_all_orders_detailed()
 
     mock_order_repo.find_all.assert_called_once_with(None)
     assert len(result) == 2
@@ -83,7 +83,7 @@ async def test_list_all_orders_with_status_filter(
 ) -> None:
     mock_order_repo.find_all.return_value = [_make_order()]
 
-    result = await service.list_all_orders("completed")
+    result = await service.list_all_orders_detailed("completed")
 
     mock_order_repo.find_all.assert_called_once_with("completed")
     assert len(result) == 1
