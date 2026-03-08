@@ -20,6 +20,7 @@ class CreateOrderResponse(BaseModel):
 class OrderResponse(BaseModel):
     id: str
     offer_id: str
+    offer_title: str | None = None
     zone: str
     format: str
     status: str

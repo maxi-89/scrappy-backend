@@ -14,6 +14,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "googlemaps>=4.10.0",
     "stripe>=10.0.0",
+    "openpyxl>=3.1.0",
 ]
 
 [tool.uv]
@@ -51,6 +52,10 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "stripe.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "openpyxl.*"
 ignore_missing_imports = true
 
 [tool.ruff]

@@ -13,6 +13,17 @@ Globals:
 
 Resources:
 
+  # ── Results S3 Bucket ─────────────────────────────────────────────────────
+  ResultsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "scrappy-results-${AWS::AccountId}-${AWS::Region}"
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldResults
+            Status: Enabled
+            ExpirationInDays: 30
+
   # ── API Lambda (FastAPI + Mangum) ─────────────────────────────────────────
   ApiFunction:
     Type: AWS::Serverless::Function
@@ -24,12 +35,17 @@ Resources:
             Effect: Allow
             Action: states:StartExecution
             Resource: !Ref ScrapingStateMachine
+        - S3ReadPolicy:
+            BucketName: !Ref ResultsBucket
       Environment:
         Variables:
           STATE_MACHINE_ARN: !Ref ScrapingStateMachine
           ADMIN_API_KEY: "{{resolve:ssm:/scrappy/admin-api-key}}"
           AUTH0_DOMAIN: "{{resolve:ssm:/scrappy/auth0-domain}}"
           AUTH0_AUDIENCE: "{{resolve:ssm:/scrappy/auth0-audience}}"
+          STRIPE_SECRET_KEY: "{{resolve:ssm:/scrappy/stripe-secret-key}}"
+          STRIPE_WEBHOOK_SECRET: "{{resolve:ssm:/scrappy/stripe-webhook-secret}}"
+          RESULTS_BUCKET: !Ref ResultsBucket
       Events:
         Api:
           Type: HttpApi
@@ -64,6 +80,12 @@ Resources:
     Properties:
       Handler: lambdas.scraping_saver_handler.handler
       Timeout: 60
+      Policies:
+        - S3WritePolicy:
+            BucketName: !Ref ResultsBucket
+      Environment:
+        Variables:
+          RESULTS_BUCKET: !Ref ResultsBucket
 
   ScrapingMarkFailedFunction:
     Type: AWS::Serverless::Function
@@ -101,3 +123,6 @@ Outputs:
   StateMachineArn:
     Description: Scraping State Machine ARN
     Value: !Ref ScrapingStateMachine
+  ResultsBucketName:
+    Description: S3 bucket for scraping result files
+    Value: !Ref ResultsBucket

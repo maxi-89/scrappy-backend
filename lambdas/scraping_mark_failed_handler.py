@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.infrastructure.database.session import AsyncSessionLocal
+from app.infrastructure.repositories.order_repository import OrderRepository
 from app.infrastructure.repositories.scraping_job_repository import ScrapingJobRepository
 
 logger = logging.getLogger(__name__)
@@ -37,13 +38,27 @@ async def _run(event: dict[str, Any]) -> dict[str, Any]:
         logger.error("MarkFailed: ScrapingJob not found job_id=%s", job_id)
         return {"job_id": job_id}
 
+    now = datetime.now(UTC)
     job.status = "failed"
     job.error_message = error_message
-    job.finished_at = datetime.now(UTC)
+    job.finished_at = now
 
     async with AsyncSessionLocal() as session:
         repo = ScrapingJobRepository(session)
         await repo.update(job)
+
+    # If linked to an order, mark it as failed too
+    if job.order_id:
+        async with AsyncSessionLocal() as session:
+            order_repo = OrderRepository(session)
+            order = await order_repo.find_by_id(job.order_id)
+
+        if order is not None and order.status in ("paid", "scraping"):
+            order.status = "failed"
+            async with AsyncSessionLocal() as session:
+                order_repo = OrderRepository(session)
+                await order_repo.update(order)
+            logger.error("Order %s marked failed", order.id)
 
     logger.error("MarkFailed completed job_id=%s error=%s", job_id, error_message)
     return {"job_id": job_id}

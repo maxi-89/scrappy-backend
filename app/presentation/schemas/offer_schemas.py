@@ -7,8 +7,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class CreateOfferRequest(BaseModel):
-    title: str = Field(min_length=1, max_length=200)
-    category: str = Field(min_length=1, max_length=100)
+    title: str = Field(min_length=2, max_length=200)
+    category: str = Field(min_length=2, max_length=100)
     description: str | None = None
     is_active: bool = False
 
