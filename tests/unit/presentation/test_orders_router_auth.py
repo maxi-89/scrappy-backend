@@ -123,17 +123,22 @@ async def test_get_orders_returns_401_when_token_is_expired() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_authenticated_get_orders_returns_stub_501() -> None:
-    # Arrange — bypass real JWT verification
+async def test_authenticated_get_orders_returns_200() -> None:
+    # Arrange — bypass real JWT verification and order service
+    from app.infrastructure.dependencies import get_order_service
+
+    mock_svc = AsyncMock()
+    mock_svc.list_orders.return_value = []
     app.dependency_overrides[get_current_user] = lambda: _VALID_USER
+    app.dependency_overrides[get_order_service] = lambda: mock_svc
 
     # Act
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get("/orders", headers={"Authorization": "Bearer fake"})
 
-    # Assert — stub returns 501, handler was reached
-    assert response.status_code == 501
-    assert response.json() == {"status": "not implemented"}
+    # Assert — endpoint is now implemented
+    assert response.status_code == 200
+    assert response.json() == []
 
 
 async def test_authenticated_post_orders_missing_body_returns_422() -> None:
@@ -148,9 +153,15 @@ async def test_authenticated_post_orders_missing_body_returns_422() -> None:
     assert response.status_code == 422
 
 
-async def test_authenticated_get_order_by_id_returns_stub_501() -> None:
+async def test_authenticated_get_order_by_id_returns_404_when_not_found() -> None:
     # Arrange
+    from app.infrastructure.dependencies import get_order_service
+    from app.infrastructure.errors.app_error import AppError
+
+    mock_svc = AsyncMock()
+    mock_svc.get_order.side_effect = AppError("Order not found", status_code=404)
     app.dependency_overrides[get_current_user] = lambda: _VALID_USER
+    app.dependency_overrides[get_order_service] = lambda: mock_svc
 
     # Act
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -158,9 +169,8 @@ async def test_authenticated_get_order_by_id_returns_stub_501() -> None:
             "/orders/some-order-id", headers={"Authorization": "Bearer fake"}
         )
 
-    # Assert
-    assert response.status_code == 501
-    assert response.json() == {"status": "not implemented"}
+    # Assert — endpoint is now implemented, 404 for missing order
+    assert response.status_code == 404
 
 
 async def test_authenticated_download_order_returns_stub_501() -> None:
