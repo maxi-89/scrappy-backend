@@ -47,6 +47,13 @@ class OrderRepository(IOrderRepository):
         )
         return [self._map_to_domain(row) for row in result.scalars().all()]
 
+    async def find_by_stripe_payment_intent_id(self, payment_intent_id: str) -> Order | None:
+        result = await self._session.execute(
+            select(OrderORM).where(OrderORM.stripe_payment_intent_id == payment_intent_id)
+        )
+        row = result.scalar_one_or_none()
+        return self._map_to_domain(row) if row else None
+
     async def update(self, order: Order) -> None:
         stmt = (
             sa_update(OrderORM)

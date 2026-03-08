@@ -8,7 +8,7 @@ from mangum import Mangum
 
 from app.infrastructure.errors.app_error import AppError
 from app.infrastructure.errors.domain_validation_error import DomainValidationError
-from app.presentation.routers import offers_router, orders_router, public_offers_router, scraping_jobs_router
+from app.presentation.routers import offers_router, orders_router, public_offers_router, scraping_jobs_router, webhooks_router
 
 app = FastAPI(title="Scrappy API", version="1.0.0")
 
@@ -26,6 +26,7 @@ async def domain_validation_error_handler(
 
 
 app.include_router(public_offers_router.router, prefix="/offers", tags=["offers"])
+app.include_router(webhooks_router.router, prefix="/webhooks", tags=["webhooks"])
 app.include_router(orders_router.router, prefix="/orders", tags=["orders"])
 app.include_router(offers_router.router, prefix="/admin/offers", tags=["admin"])
 app.include_router(
