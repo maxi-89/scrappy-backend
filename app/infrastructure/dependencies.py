@@ -5,10 +5,12 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.services.offer_service import OfferService
+from app.application.services.order_service import OrderService
 from app.application.services.scraping_job_service import ScrapingJobService
 from app.application.services.user_service import UserService
 from app.domain.models.current_user import CurrentUser
 from app.domain.repositories.i_offer_repository import IOfferRepository
+from app.domain.repositories.i_order_repository import IOrderRepository
 from app.domain.repositories.i_pricing_repository import IPricingRepository
 from app.domain.repositories.i_scraping_job_repository import IScrapingJobRepository
 from app.domain.repositories.i_user_repository import IUserRepository
@@ -17,9 +19,11 @@ from app.infrastructure.aws.sfn_client import SfnStarterClient
 from app.infrastructure.database.session import get_db_session
 from app.infrastructure.errors.app_error import AppError
 from app.infrastructure.repositories.offer_repository import OfferRepository
+from app.infrastructure.repositories.order_repository import OrderRepository
 from app.infrastructure.repositories.pricing_repository import PricingRepository
 from app.infrastructure.repositories.scraping_job_repository import ScrapingJobRepository
 from app.infrastructure.repositories.user_repository import UserRepository
+from app.infrastructure.stripe.stripe_client import IStripeClient, StripeClient
 
 _ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "")
 
@@ -45,8 +49,8 @@ async def get_current_user(
     if credentials is None:
         raise AppError("Missing authentication token", status_code=401)
     current_user = verify_token(credentials.credentials)
-    await user_service.sync_user(current_user)
-    return current_user
+    local_user = await user_service.sync_user(current_user)
+    return CurrentUser(sub=current_user.sub, email=current_user.email, user_id=local_user.id)
 
 
 def get_admin_key(x_admin_key: str = Header(...)) -> str:
@@ -88,3 +92,22 @@ def get_offer_service(
     pricing_repository: IPricingRepository = Depends(get_pricing_repository),
 ) -> OfferService:
     return OfferService(repository, pricing_repository)
+
+
+def get_order_repository(
+    session: AsyncSession = Depends(get_db_session),
+) -> IOrderRepository:
+    return OrderRepository(session)
+
+
+def get_stripe_client() -> IStripeClient:
+    return StripeClient()
+
+
+def get_order_service(
+    order_repository: IOrderRepository = Depends(get_order_repository),
+    offer_repository: IOfferRepository = Depends(get_offer_repository),
+    pricing_repository: IPricingRepository = Depends(get_pricing_repository),
+    stripe_client: IStripeClient = Depends(get_stripe_client),
+) -> OrderService:
+    return OrderService(order_repository, offer_repository, pricing_repository, stripe_client)

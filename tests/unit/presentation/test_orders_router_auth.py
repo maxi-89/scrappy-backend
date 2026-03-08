@@ -57,10 +57,10 @@ async def test_get_order_by_id_returns_401_when_no_authorization_header() -> Non
     assert response.json() == {"error": "Missing authentication token"}
 
 
-async def test_download_dataset_returns_401_when_no_authorization_header() -> None:
+async def test_download_order_returns_401_when_no_authorization_header() -> None:
     # Arrange / Act
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get("/orders/some-order/items/some-item/download")
+        response = await client.get("/orders/some-order/download")
 
     # Assert
     assert response.status_code == 401
@@ -136,8 +136,8 @@ async def test_authenticated_get_orders_returns_stub_501() -> None:
     assert response.json() == {"status": "not implemented"}
 
 
-async def test_authenticated_post_orders_returns_stub_501() -> None:
-    # Arrange
+async def test_authenticated_post_orders_missing_body_returns_422() -> None:
+    # Arrange — POST /orders is now a real endpoint; empty body → validation error
     app.dependency_overrides[get_current_user] = lambda: _VALID_USER
 
     # Act
@@ -145,8 +145,7 @@ async def test_authenticated_post_orders_returns_stub_501() -> None:
         response = await client.post("/orders", json={}, headers={"Authorization": "Bearer fake"})
 
     # Assert
-    assert response.status_code == 501
-    assert response.json() == {"status": "not implemented"}
+    assert response.status_code == 422
 
 
 async def test_authenticated_get_order_by_id_returns_stub_501() -> None:
@@ -164,14 +163,14 @@ async def test_authenticated_get_order_by_id_returns_stub_501() -> None:
     assert response.json() == {"status": "not implemented"}
 
 
-async def test_authenticated_download_dataset_returns_stub_501() -> None:
+async def test_authenticated_download_order_returns_stub_501() -> None:
     # Arrange
     app.dependency_overrides[get_current_user] = lambda: _VALID_USER
 
     # Act
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get(
-            "/orders/some-order/items/some-item/download",
+            "/orders/some-order/download",
             headers={"Authorization": "Bearer fake"},
         )
 

@@ -1,16 +1,20 @@
 from fastapi import APIRouter, Depends
 
+from app.application.services.order_service import OrderService
 from app.domain.models.current_user import CurrentUser
-from app.infrastructure.dependencies import get_current_user
+from app.infrastructure.dependencies import get_current_user, get_order_service
+from app.presentation.schemas.order_schemas import CreateOrderRequest, CreateOrderResponse
 
 router = APIRouter()
 
 
-@router.post("", status_code=501)
+@router.post("", response_model=CreateOrderResponse, status_code=201)
 async def create_order(
+    payload: CreateOrderRequest,
     current_user: CurrentUser = Depends(get_current_user),
-) -> dict[str, str]:
-    return {"status": "not implemented"}
+    service: OrderService = Depends(get_order_service),
+) -> CreateOrderResponse:
+    return await service.create_order(current_user.user_id, payload)
 
 
 @router.get("", status_code=501)
@@ -28,10 +32,9 @@ async def get_order(
     return {"status": "not implemented"}
 
 
-@router.get("/{order_id}/items/{item_id}/download", status_code=501)
-async def download_dataset(
+@router.get("/{order_id}/download", status_code=501)
+async def download_order(
     order_id: str,
-    item_id: str,
     current_user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, str]:
     return {"status": "not implemented"}
