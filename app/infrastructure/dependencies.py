@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.services.offer_service import OfferService
 from app.application.services.order_service import OrderService
+from app.application.services.pricing_service import PricingService
 from app.application.services.scraping_job_service import ScrapingJobService
 from app.application.services.user_service import UserService
 from app.application.services.webhook_service import StripeWebhookService
@@ -16,6 +17,7 @@ from app.domain.repositories.i_pricing_repository import IPricingRepository
 from app.domain.repositories.i_scraping_job_repository import IScrapingJobRepository
 from app.domain.repositories.i_user_repository import IUserRepository
 from app.infrastructure.auth.auth0_jwt_verifier import verify_token
+from app.infrastructure.aws.s3_client import IS3Client, S3Client
 from app.infrastructure.aws.sfn_client import SfnStarterClient
 from app.infrastructure.database.session import get_db_session
 from app.infrastructure.errors.app_error import AppError
@@ -76,6 +78,10 @@ def get_sfn_client() -> SfnStarterClient:
     return SfnStarterClient()
 
 
+def get_s3_client() -> IS3Client:
+    return S3Client()
+
+
 def get_offer_repository(
     session: AsyncSession = Depends(get_db_session),
 ) -> IOfferRepository:
@@ -86,6 +92,12 @@ def get_pricing_repository(
     session: AsyncSession = Depends(get_db_session),
 ) -> IPricingRepository:
     return PricingRepository(session)
+
+
+def get_pricing_service(
+    repository: IPricingRepository = Depends(get_pricing_repository),
+) -> PricingService:
+    return PricingService(repository)
 
 
 def get_offer_service(
@@ -111,6 +123,7 @@ def get_order_service(
     pricing_repository: IPricingRepository = Depends(get_pricing_repository),
     stripe_client: IStripeClient = Depends(get_stripe_client),
     scraping_job_repository: IScrapingJobRepository = Depends(get_scraping_job_repository),
+    s3_client: IS3Client = Depends(get_s3_client),
 ) -> OrderService:
     return OrderService(
         order_repository,
@@ -118,6 +131,7 @@ def get_order_service(
         pricing_repository,
         stripe_client,
         scraping_job_repository,
+        s3_client,
     )
 
 

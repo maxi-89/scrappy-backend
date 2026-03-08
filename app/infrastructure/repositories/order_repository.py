@@ -54,6 +54,13 @@ class OrderRepository(IOrderRepository):
         row = result.scalar_one_or_none()
         return self._map_to_domain(row) if row else None
 
+    async def find_all(self, status: str | None = None) -> list[Order]:
+        stmt = select(OrderORM).order_by(OrderORM.created_at.desc())
+        if status is not None:
+            stmt = stmt.where(OrderORM.status == status)
+        result = await self._session.execute(stmt)
+        return [self._map_to_domain(row) for row in result.scalars().all()]
+
     async def update(self, order: Order) -> None:
         stmt = (
             sa_update(OrderORM)

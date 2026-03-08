@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends
+from fastapi.responses import Response
 
 from app.application.services.order_service import OrderService
 from app.domain.models.current_user import CurrentUser
@@ -9,6 +10,12 @@ from app.presentation.schemas.order_schemas import (
     OrderDetailResponse,
     OrderResponse,
 )
+
+_CONTENT_TYPES: dict[str, str] = {
+    "csv": "text/csv",
+    "excel": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "json": "application/json",
+}
 
 router = APIRouter()
 
@@ -39,9 +46,12 @@ async def get_order(
     return await service.get_order(order_id, current_user.user_id)
 
 
-@router.get("/{order_id}/download", status_code=501)
+@router.get("/{order_id}/download")
 async def download_order(
     order_id: str,
     current_user: CurrentUser = Depends(get_current_user),
-) -> dict[str, str]:
-    return {"status": "not implemented"}
+    service: OrderService = Depends(get_order_service),
+) -> Response:
+    data, fmt = await service.download_order(order_id, current_user.user_id)
+    content_type = _CONTENT_TYPES.get(fmt, "application/octet-stream")
+    return Response(content=data, media_type=content_type)
