@@ -488,20 +488,223 @@ Total time: ~4-6 minutes.
 
 ---
 
-## Phase 9 — Verification Checklist
+## Phase 9 — Custom Domain
+
+This phase sets up `api.scrappy.io` (backend) and `scrappy.io` (frontend) instead of the auto-generated AWS and Vercel URLs. It requires owning the domain and having access to its DNS settings.
+
+### 9.1 Buy or transfer the domain to Route 53
+
+**Option A — Register a new domain in Route 53:**
+1. Go to **AWS Console → Route 53 → Domains → Register domain**.
+2. Search for `scrappy.io`, select it, and complete the purchase.
+3. Route 53 automatically creates a **Hosted Zone** for the domain.
+
+**Option B — Use a domain registered elsewhere (GoDaddy, Namecheap, etc.):**
+1. Go to **Route 53 → Hosted zones → Create hosted zone**.
+2. Fill in:
+   - **Domain name**: `scrappy.io`
+   - **Type**: Public hosted zone
+3. Click **Create hosted zone**.
+4. Route 53 shows 4 **NS (nameserver) records** — e.g.:
+   ```
+   ns-123.awsdns-12.com
+   ns-456.awsdns-34.net
+   ns-789.awsdns-56.org
+   ns-012.awsdns-78.co.uk
+   ```
+5. Go to your domain registrar (GoDaddy, Namecheap, etc.) and replace its nameservers with these 4 values.
+6. DNS propagation takes 10 minutes to 48 hours.
+
+### 9.2 Request an SSL certificate in ACM
+
+API Gateway requires an ACM certificate **in `us-east-1`** for custom domains.
+
+```bash
+aws acm request-certificate \
+  --domain-name "scrappy.io" \
+  --subject-alternative-names "*.scrappy.io" \
+  --validation-method DNS \
+  --region us-east-1
+```
+
+Note the `CertificateArn` from the output.
+
+**Validate the certificate via DNS:**
+
+```bash
+# Get the CNAME validation record
+aws acm describe-certificate \
+  --certificate-arn arn:aws:acm:us-east-1:[ACCOUNT]:certificate/[ID] \
+  --region us-east-1 \
+  --query "Certificate.DomainValidationOptions[0].ResourceRecord"
+```
+
+Output:
+```json
+{
+  "Name": "_abc123.scrappy.io.",
+  "Type": "CNAME",
+  "Value": "_def456.acm-validations.aws."
+}
+```
+
+Add this CNAME record to Route 53:
+```bash
+# Get your Hosted Zone ID first
+aws route53 list-hosted-zones \
+  --query "HostedZones[?Name=='scrappy.io.'].Id" \
+  --output text
+# Returns: /hostedzone/[ZONE-ID]
+
+# Create the validation CNAME record
+aws route53 change-resource-record-sets \
+  --hosted-zone-id [ZONE-ID] \
+  --change-batch '{
+    "Changes": [{
+      "Action": "CREATE",
+      "ResourceRecordSet": {
+        "Name": "_abc123.scrappy.io.",
+        "Type": "CNAME",
+        "TTL": 300,
+        "ResourceRecords": [{"Value": "_def456.acm-validations.aws."}]
+      }
+    }]
+  }'
+```
+
+Wait for the certificate to be validated (~2-5 minutes):
+```bash
+aws acm wait certificate-validated \
+  --certificate-arn arn:aws:acm:us-east-1:[ACCOUNT]:certificate/[ID] \
+  --region us-east-1
+```
+
+### 9.3 Create custom domain in API Gateway
+
+1. Go to **AWS Console → API Gateway → Custom domain names → Create**.
+2. Fill in:
+   - **Domain name**: `api.scrappy.io`
+   - **ACM certificate**: select the certificate created in 9.2
+3. Click **Create domain name**.
+4. Note the **API Gateway domain name** shown after creation — e.g.:
+   ```
+   d-abc123xyz.execute-api.us-east-1.amazonaws.com
+   ```
+
+**Map the custom domain to the API stage:**
+1. In the custom domain detail, click **API mappings → Add new mapping**.
+2. Select your API and stage (`$default`).
+3. Leave **Path** empty (maps the root).
+4. Click **Save**.
+
+### 9.4 Point api.scrappy.io to API Gateway (Route 53)
+
+```bash
+aws route53 change-resource-record-sets \
+  --hosted-zone-id [ZONE-ID] \
+  --change-batch '{
+    "Changes": [{
+      "Action": "CREATE",
+      "ResourceRecordSet": {
+        "Name": "api.scrappy.io.",
+        "Type": "A",
+        "AliasTarget": {
+          "HostedZoneId": "Z2FDTNDATAQYW2",
+          "DNSName": "d-abc123xyz.execute-api.us-east-1.amazonaws.com.",
+          "EvaluateTargetHealth": false
+        }
+      }
+    }]
+  }'
+```
+
+> `Z2FDTNDATAQYW2` is the fixed Route 53 Hosted Zone ID for API Gateway — it is always this value regardless of region.
+
+Verify (wait 1-2 minutes for DNS):
+```bash
+curl https://api.scrappy.io/offers
+```
+
+### 9.5 Deploy frontend to Vercel and point scrappy.io
+
+**Deploy to Vercel:**
+1. Go to [vercel.com](https://vercel.com) → **New Project**.
+2. Import the `scrappy-frontend` GitHub repository.
+3. Set environment variables in Vercel dashboard:
+   ```
+   NEXT_PUBLIC_API_URL        = https://api.scrappy.io
+   NEXT_PUBLIC_AUTH0_DOMAIN   = [TENANT].us.auth0.com
+   NEXT_PUBLIC_AUTH0_CLIENT_ID = [CLIENT-ID from Phase 2.3]
+   NEXT_PUBLIC_AUTH0_AUDIENCE  = https://api.scrappy.io
+   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY = pk_live_...
+   ```
+4. Click **Deploy**. Vercel assigns a URL: `scrappy-frontend.vercel.app`.
+
+**Add custom domain in Vercel:**
+1. In the project dashboard, go to **Settings → Domains**.
+2. Add `scrappy.io` and `www.scrappy.io`.
+3. Vercel shows the DNS records to create.
+
+**Add the records in Route 53:**
+```bash
+# scrappy.io → Vercel (A record with Vercel's IP)
+aws route53 change-resource-record-sets \
+  --hosted-zone-id [ZONE-ID] \
+  --change-batch '{
+    "Changes": [
+      {
+        "Action": "CREATE",
+        "ResourceRecordSet": {
+          "Name": "scrappy.io.",
+          "Type": "A",
+          "TTL": 300,
+          "ResourceRecords": [{"Value": "76.76.21.21"}]
+        }
+      },
+      {
+        "Action": "CREATE",
+        "ResourceRecordSet": {
+          "Name": "www.scrappy.io.",
+          "Type": "CNAME",
+          "TTL": 300,
+          "ResourceRecords": [{"Value": "cname.vercel-dns.com."}]
+        }
+      }
+    ]
+  }'
+```
+
+> Vercel's IP `76.76.21.21` is their standard A record for root domains. Confirm the exact values in Vercel's domain settings page for your project.
+
+### 9.6 Update all services with the final URLs
+
+Now that you have real domains, update the configurations set in earlier phases:
+
+**Auth0 — update callback URLs (Phase 2.3):**
+- **Allowed Callback URLs**: `https://scrappy.io/auth/callback, http://localhost:3000/auth/callback`
+- **Allowed Logout URLs**: `https://scrappy.io, http://localhost:3000`
+- **Allowed Web Origins**: `https://scrappy.io, http://localhost:3000`
+
+**Stripe — update webhook URL (Phase 7):**
+- New URL: `https://api.scrappy.io/webhooks/stripe`
+
+---
+
+## Phase 10 — Verification Checklist
 
 After the first deploy, verify each component:
 
 ```bash
-# 1. API is reachable
-curl https://[ID].execute-api.us-east-1.amazonaws.com/docs
+# 1. API is reachable (use custom domain if Phase 9 is done, otherwise the raw API Gateway URL)
+curl https://api.scrappy.io/docs
+# or: curl https://[ID].execute-api.us-east-1.amazonaws.com/docs
 
 # 2. Offers endpoint works (no auth required)
-curl https://[ID].execute-api.us-east-1.amazonaws.com/offers
+curl https://api.scrappy.io/offers
 
 # 3. Admin key works
 curl -H "X-Admin-Key: [YOUR-ADMIN-KEY]" \
-  https://[ID].execute-api.us-east-1.amazonaws.com/admin/pricing
+  https://api.scrappy.io/admin/pricing
 
 # 4. Lambda logs (CloudWatch)
 aws logs tail /aws/lambda/scrappy-ApiFunction-[ID] --follow
