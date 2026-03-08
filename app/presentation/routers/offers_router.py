@@ -2,7 +2,6 @@ from fastapi import APIRouter, Depends
 
 from app.application.services.offer_service import OfferService
 from app.infrastructure.dependencies import get_admin_key, get_offer_service
-from app.infrastructure.errors.app_error import AppError
 from app.presentation.schemas.offer_schemas import (
     CreateOfferRequest,
     OfferResponse,
@@ -28,10 +27,7 @@ async def update_offer(
     _: str = Depends(get_admin_key),
     service: OfferService = Depends(get_offer_service),
 ) -> OfferResponse:
-    offer = await service.update_offer(offer_id, payload)
-    if offer is None:
-        raise AppError("Offer not found", status_code=404)
-    return offer
+    return await service.update_offer(offer_id, payload)
 
 
 @router.delete("/{offer_id}", status_code=204)

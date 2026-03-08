@@ -45,7 +45,7 @@ class PricingRepository(IPricingRepository):
         else:
             row.price_usd = Decimal(price_usd)
             row.updated_at = now
-        await self._session.flush()
+        await self._session.commit()
         return self._map_to_domain(row)
 
     def _map_to_domain(self, row: PricingORM) -> Pricing:

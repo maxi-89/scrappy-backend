@@ -75,7 +75,10 @@ class StripeWebhookService:
 
         # Get offer category
         offer = await self._offer_repo.find_by_id(order.offer_id)
-        category = offer.category if offer else order.offer_id
+        if offer is None:
+            logger.warning("Offer %s not found for order %s — skipping scraping", order.offer_id, order.id)
+            return
+        category = offer.category
 
         # Create scraping job
         job_id = str(uuid.uuid4())
