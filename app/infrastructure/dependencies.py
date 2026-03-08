@@ -8,6 +8,7 @@ from app.application.services.offer_service import OfferService
 from app.application.services.order_service import OrderService
 from app.application.services.scraping_job_service import ScrapingJobService
 from app.application.services.user_service import UserService
+from app.application.services.webhook_service import StripeWebhookService
 from app.domain.models.current_user import CurrentUser
 from app.domain.repositories.i_offer_repository import IOfferRepository
 from app.domain.repositories.i_order_repository import IOrderRepository
@@ -111,3 +112,23 @@ def get_order_service(
     stripe_client: IStripeClient = Depends(get_stripe_client),
 ) -> OrderService:
     return OrderService(order_repository, offer_repository, pricing_repository, stripe_client)
+
+
+_STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+
+
+def get_webhook_service(
+    order_repository: IOrderRepository = Depends(get_order_repository),
+    offer_repository: IOfferRepository = Depends(get_offer_repository),
+    scraping_job_repository: IScrapingJobRepository = Depends(get_scraping_job_repository),
+    stripe_client: IStripeClient = Depends(get_stripe_client),
+    sfn_client: SfnStarterClient = Depends(get_sfn_client),
+) -> StripeWebhookService:
+    return StripeWebhookService(
+        stripe_client=stripe_client,
+        order_repository=order_repository,
+        offer_repository=offer_repository,
+        scraping_job_repository=scraping_job_repository,
+        sfn_client=sfn_client,
+        webhook_secret=_STRIPE_WEBHOOK_SECRET,
+    )

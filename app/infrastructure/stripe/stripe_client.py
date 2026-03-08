@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Any
 
 import stripe
 
@@ -16,6 +17,13 @@ class PaymentIntentResult:
 class IStripeClient(ABC):
     @abstractmethod
     def create_payment_intent(self, amount_usd: float, order_id: str) -> PaymentIntentResult: ...
+
+    @abstractmethod
+    def construct_event(
+        self, payload: bytes, sig_header: str, webhook_secret: str
+    ) -> dict[str, Any]:
+        """Verify Stripe webhook signature and return the parsed event."""
+        ...
 
 
 class StripeClient(IStripeClient):
@@ -32,3 +40,9 @@ class StripeClient(IStripeClient):
             payment_intent_id=intent["id"],
             client_secret=intent["client_secret"],
         )
+
+    def construct_event(
+        self, payload: bytes, sig_header: str, webhook_secret: str
+    ) -> dict[str, Any]:
+        event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
+        return dict(event)
