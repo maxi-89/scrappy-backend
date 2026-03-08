@@ -8,7 +8,15 @@ from mangum import Mangum
 
 from app.infrastructure.errors.app_error import AppError
 from app.infrastructure.errors.domain_validation_error import DomainValidationError
-from app.presentation.routers import offers_router, orders_router, public_offers_router, scraping_jobs_router, webhooks_router
+from app.presentation.routers import (
+    admin_orders_router,
+    admin_pricing_router,
+    offers_router,
+    orders_router,
+    public_offers_router,
+    scraping_jobs_router,
+    webhooks_router,
+)
 
 app = FastAPI(title="Scrappy API", version="1.0.0")
 
@@ -32,6 +40,16 @@ app.include_router(offers_router.router, prefix="/admin/offers", tags=["admin"])
 app.include_router(
     scraping_jobs_router.router,
     prefix="/admin/scraping-jobs",
+    tags=["admin"],
+)
+app.include_router(
+    admin_pricing_router.router,
+    prefix="/admin/pricing",
+    tags=["admin"],
+)
+app.include_router(
+    admin_orders_router.router,
+    prefix="/admin/orders",
     tags=["admin"],
 )
 

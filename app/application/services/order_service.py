@@ -9,6 +9,7 @@ from app.domain.repositories.i_offer_repository import IOfferRepository
 from app.domain.repositories.i_order_repository import IOrderRepository
 from app.domain.repositories.i_pricing_repository import IPricingRepository
 from app.domain.repositories.i_scraping_job_repository import IScrapingJobRepository
+from app.infrastructure.aws.s3_client import IS3Client
 from app.infrastructure.errors.app_error import AppError
 from app.infrastructure.stripe.stripe_client import IStripeClient
 from app.presentation.schemas.order_schemas import (
@@ -28,12 +29,14 @@ class OrderService:
         pricing_repository: IPricingRepository,
         stripe_client: IStripeClient,
         scraping_job_repository: IScrapingJobRepository | None = None,
+        s3_client: IS3Client | None = None,
     ) -> None:
         self._order_repository = order_repository
         self._offer_repository = offer_repository
         self._pricing_repository = pricing_repository
         self._stripe_client = stripe_client
         self._scraping_job_repository = scraping_job_repository
+        self._s3_client = s3_client
 
     async def create_order(self, user_id: str, payload: CreateOrderRequest) -> CreateOrderResponse:
         offer = await self._offer_repository.find_active_by_id(payload.offer_id)
@@ -73,6 +76,24 @@ class OrderService:
             client_secret=payment.client_secret,
             total_usd=float(pricing.price_usd),
         )
+
+    async def download_order(self, order_id: str, user_id: str) -> tuple[bytes, str]:
+        """Return (file_bytes, format) for a completed order owned by user_id."""
+        order = await self._order_repository.find_by_id(order_id)
+        if order is None:
+            raise AppError("Order not found", status_code=404)
+        if order.user_id != user_id:
+            raise AppError("Access denied", status_code=403)
+        if order.status != "completed" or order.result_path is None:
+            raise AppError("Result not available yet", status_code=404)
+        if self._s3_client is None:
+            raise AppError("Download not available", status_code=503)
+        data = self._s3_client.get_object_bytes(order.result_path)
+        return data, order.format
+
+    async def list_all_orders(self, status: str | None = None) -> list[OrderResponse]:
+        orders = await self._order_repository.find_all(status)
+        return [self._to_order_response(o) for o in orders]
 
     async def list_orders(self, user_id: str) -> list[OrderResponse]:
         orders = await self._order_repository.find_by_user(user_id)

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -20,6 +22,31 @@ class PricingRepository(IPricingRepository):
         )
         row = result.scalar_one_or_none()
         return self._map_to_domain(row) if row else None
+
+    async def find_all(self) -> list[Pricing]:
+        result = await self._session.execute(select(PricingORM).order_by(PricingORM.zone))
+        return [self._map_to_domain(row) for row in result.scalars().all()]
+
+    async def upsert(self, zone: str, price_usd: str) -> Pricing:
+        result = await self._session.execute(
+            select(PricingORM).where(PricingORM.zone == zone)
+        )
+        row = result.scalar_one_or_none()
+        now = datetime.now(UTC)
+        if row is None:
+            row = PricingORM(
+                id=str(uuid.uuid4()),
+                zone=zone,
+                price_usd=Decimal(price_usd),
+                created_at=now,
+                updated_at=now,
+            )
+            self._session.add(row)
+        else:
+            row.price_usd = Decimal(price_usd)
+            row.updated_at = now
+        await self._session.flush()
+        return self._map_to_domain(row)
 
     def _map_to_domain(self, row: PricingORM) -> Pricing:
         return Pricing(
