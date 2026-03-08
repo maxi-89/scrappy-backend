@@ -110,8 +110,15 @@ def get_order_service(
     offer_repository: IOfferRepository = Depends(get_offer_repository),
     pricing_repository: IPricingRepository = Depends(get_pricing_repository),
     stripe_client: IStripeClient = Depends(get_stripe_client),
+    scraping_job_repository: IScrapingJobRepository = Depends(get_scraping_job_repository),
 ) -> OrderService:
-    return OrderService(order_repository, offer_repository, pricing_repository, stripe_client)
+    return OrderService(
+        order_repository,
+        offer_repository,
+        pricing_repository,
+        stripe_client,
+        scraping_job_repository,
+    )
 
 
 _STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
