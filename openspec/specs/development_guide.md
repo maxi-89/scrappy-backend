@@ -1,390 +1,209 @@
-# Development Guide — Scrappy
+# Guía de Desarrollo — Scrappy
 
-Step-by-step instructions to set up and run the project locally and deploy to production.
+Instrucciones para configurar y correr el proyecto localmente y desplegar a producción.
 
-## Tech Stack
+## Stack
 
 ### Backend
-- **Runtime**: Python 3.12
-- **Framework**: FastAPI
-- **ASGI Adapter**: Mangum (AWS Lambda)
-- **Database**: Supabase (PostgreSQL via SQLAlchemy 2.0 async + asyncpg)
-- **Validation**: Pydantic v2
-- **Testing**: pytest + pytest-asyncio
-- **Linting**: ruff + mypy
-- **Dependency management**: uv (pyproject.toml)
-
-### Frontend
-- **Framework**: Next.js (App Router)
-- **Language**: TypeScript (strict mode)
-- **Styling**: Tailwind CSS
-- **Testing**: Jest + React Testing Library / Playwright
-
-### Infrastructure
-- **Frontend**: Vercel
-- **Backend**: AWS Lambda (via Mangum) + API Gateway
-- **Database**: Supabase (managed PostgreSQL)
-- **Payments**: Stripe
+- **Runtime**: Node.js 22
+- **Framework**: NestJS 11 + TypeScript (strict)
+- **ORM**: Prisma 7 (adapter-pg)
+- **Database**: PostgreSQL (AWS RDS)
+- **Auth**: JWT (access 15m + refresh 7d) + bcrypt
+- **Email**: AWS SES (`@aws-sdk/client-ses`)
+- **Lambda adapter**: `@vendia/serverless-express`
+- **Infra**: AWS SAM (Lambda nodejs22.x + API Gateway HTTP)
+- **Tests**: Jest + Supertest
 
 ---
 
-## Prerequisites
+## Prerrequisitos
 
-- Python 3.12+
-- [uv](https://github.com/astral-sh/uv) — `curl -LsSf https://astral.sh/uv/install.sh | sh`
-- Node.js 22+ and npm 10+
-- AWS CLI configured (`aws configure`)
-- Supabase CLI — `npm install -g supabase`
-- A Supabase project (local or cloud)
+- Node.js 22+
+- PostgreSQL corriendo localmente (o URL de AWS RDS)
+- AWS CLI configurado (`aws configure`) — requerido para SES en desarrollo
+- AWS SAM CLI (`pip install aws-sam-cli`)
 
 ---
 
 ## Backend
 
-### 1. Install
+### 1. Instalar dependencias
 
 ```bash
 cd scrappy-backend
-uv sync
+npm install
 ```
 
-### 2. Environment Configuration
-
-Copy `.env.example` to `.env` and fill in the values (never commit `.env`):
+### 2. Configurar variables de entorno
 
 ```bash
 cp .env.example .env
 ```
 
+Completar los valores en `.env`:
+
 ```env
-# Database
-DATABASE_URL=postgresql+asyncpg://postgres:password@localhost:54322/postgres
+# Base de datos
+DATABASE_URL=postgresql://postgres:password@localhost:5432/scrappy
 
-# Auth0 (required from SCRUM-6 onwards)
-AUTH0_DOMAIN=your-tenant.us.auth0.com
-AUTH0_AUDIENCE=https://api.scrappy.io
+# JWT
+JWT_SECRET=change-me-use-openssl-rand-hex-32
+JWT_REFRESH_SECRET=change-me-use-openssl-rand-hex-32
 
-# Stripe
-STRIPE_SECRET_KEY=sk_test_...
-STRIPE_WEBHOOK_SECRET=whsec_...
+# AWS SES
+SES_FROM_EMAIL=tu-email@dominio.com
+AWS_REGION=us-east-1
 
-# Admin
-ADMIN_API_KEY=dev-admin-key-change-in-prod
+# Frontend (usado en el link del email de reset de contraseña)
+FRONTEND_URL=http://localhost:3001
 
-# Environment
-ENVIRONMENT=development
+# Puerto local
+PORT=3000
 ```
 
-### 3. Local Supabase Setup
+### 3. Base de datos
 
 ```bash
-# Start local Supabase (Docker required)
-supabase start
+# Crear y aplicar migraciones
+npx prisma migrate dev --name init
 
-# Apply migrations
-supabase db reset
+# Regenerar el cliente Prisma (tras cambios en schema.prisma)
+npx prisma generate
 
-# View local Studio at http://localhost:54323
+# Abrir el browser visual de la DB
+npx prisma studio
 ```
 
-### 4. Run Migrations
+### 4. Desarrollo local
 
 ```bash
-# Apply all migrations
-uv run alembic upgrade head
-
-# Generate a new migration after changing ORM models
-uv run alembic revision --autogenerate -m "describe change"
+npm run start:dev
 ```
 
-### 5. Local Development
+API disponible en: `http://localhost:3000`
+
+### 5. Tests
 
 ```bash
-# Start FastAPI dev server with hot reload
-uv run uvicorn main:app --reload --port 8000
+npm run test          # Unit tests
+npm run test:watch    # Watch mode
+npm run test:cov      # Con reporte de cobertura
+npm run test:e2e      # E2E tests (requiere DB de test)
 ```
 
-- API available at: `http://localhost:8000`
-- Interactive docs at: `http://localhost:8000/docs`
-- ReDoc at: `http://localhost:8000/redoc`
-
-### 6. Running Tests
+### 6. Linting y formateo
 
 ```bash
-# Run all tests
-uv run pytest
-
-# With coverage report
-uv run pytest --cov=app --cov-report=term-missing
-
-# Run only unit tests
-uv run pytest tests/unit/
-
-# Watch mode
-uv run pytest --watch
+npm run lint          # ESLint con auto-fix
+npm run format        # Prettier
 ```
 
-Coverage threshold: **90%** for branches, functions, and statements.
-
-### 7. Linting and Type Checking
+### 7. Build
 
 ```bash
-# Lint and auto-fix
-uv run ruff check . --fix
-uv run ruff format .
-
-# Type check
-uv run mypy app/
+npm run build         # Compila TypeScript → dist/
 ```
 
-### 8. Deploy to AWS Lambda
+---
 
-Deployment is automated via **GitHub Actions** triggered by version tags on `master`.
+## Estructura del proyecto
 
-#### Release flow
+```
+src/
+├── auth/             # Módulo de autenticación (controller, service, DTOs, strategy, guard)
+├── users/            # Módulo de usuarios (service, repository)
+├── mail/             # Módulo de email (servicio SES)
+├── prisma/           # PrismaService + PrismaModule (global)
+├── common/
+│   └── filters/      # HttpExceptionFilter (global)
+├── app.module.ts
+├── main.ts           # Entry point para desarrollo local (puerto 3000)
+└── lambda.ts         # Handler de AWS Lambda (con caché entre invocaciones warm)
+prisma/
+└── schema.prisma     # Esquema de base de datos
+template.yaml         # Definición AWS SAM (Lambda + API Gateway)
+samconfig.toml        # Configuración SAM (stack, región, capabilities)
+```
+
+---
+
+## Deploy a AWS
+
+El deploy automatizado se activa pusheando un tag de versión a `master`.
+
+### Flujo de release
 
 ```bash
 git tag v1.0.0
 git push origin v1.0.0
 ```
 
-The pipeline (`.github/workflows/deploy.yml`) runs in two sequential jobs:
+El pipeline (`.github/workflows/deploy.yml`) corre dos jobs en secuencia:
 
-1. **test** — ruff, mypy, pytest (quality gate)
-2. **deploy** — Docker build → push to ECR → `aws lambda update-function-code`
+1. **test** — ESLint + Jest (quality gate)
+2. **deploy** — `npm run build` → `sam build` → `sam deploy`
 
-#### AWS resources required (one-time setup)
+### Setup inicial (una sola vez)
 
-| Resource | Description |
+Ver [`openspec/specs/deploy-guide.md`](./deploy-guide.md) para las instrucciones completas de primer deploy.
+
+En resumen, se necesita:
+
+| Recurso | Descripción |
 |---|---|
-| ECR repository | `scrappy-backend` — stores container images |
-| Lambda function | Container image type, handler `main.handler` |
-| IAM role (OIDC) | GitHub Actions OIDC trust, ECR + Lambda permissions |
-| API Gateway (HTTP API) | Routes public traffic to the Lambda function |
+| AWS RDS PostgreSQL | Base de datos de producción |
+| SSM Parameter Store | 5 parámetros `/scrappy/*` (database-url, jwt-secret, jwt-refresh-secret, ses-from-email, frontend-url) |
+| Lambda `scrappy-api` | Creada por `sam deploy` |
+| API Gateway HTTP API | Creada por `sam deploy` |
+| IAM Role (OIDC) | Para GitHub Actions — permisos de Lambda + SAM S3 |
+| GitHub Secret | `AWS_DEPLOY_ROLE_ARN` |
 
-#### Create ECR repository
+### Deploy manual de infraestructura
 
-```bash
-aws ecr create-repository \
-  --repository-name scrappy-backend \
-  --region us-east-1
-```
-
-#### Lambda environment variables
-
-Set these directly in the Lambda function configuration (never in the Docker image):
-
-```
-DATABASE_URL           postgresql+asyncpg://...  (Supabase connection string)
-AUTH0_DOMAIN           your-tenant.us.auth0.com
-AUTH0_AUDIENCE         https://api.scrappy.io
-STRIPE_SECRET_KEY      sk_live_...
-STRIPE_WEBHOOK_SECRET  whsec_...
-ADMIN_API_KEY          <secret>
-ENVIRONMENT            production
-```
-
-#### GitHub repository secret
-
-```
-AWS_DEPLOY_ROLE_ARN    arn:aws:iam::<account-id>:role/scrappy-deploy
-```
-
-#### IAM role trust policy (GitHub OIDC)
-
-```json
-{
-  "Effect": "Allow",
-  "Principal": {
-    "Federated": "arn:aws:iam::<account-id>:oidc-provider/token.actions.githubusercontent.com"
-  },
-  "Action": "sts:AssumeRoleWithWebIdentity",
-  "Condition": {
-    "StringEquals": {
-      "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
-    },
-    "StringLike": {
-      "token.actions.githubusercontent.com:sub": "repo:maxi-89/scrappy-backend:*"
-    }
-  }
-}
-```
-
-#### IAM role permissions
-
-- `ecr:GetAuthorizationToken` (global)
-- `ecr:BatchGetImage`, `ecr:BatchCheckLayerAvailability`, `ecr:PutImage`, `ecr:InitiateLayerUpload`, `ecr:UploadLayerPart`, `ecr:CompleteLayerUpload` on the `scrappy-backend` ECR repo
-- `lambda:UpdateFunctionCode`, `lambda:GetFunction`, `lambda:GetFunctionConfiguration` on the `scrappy-backend` Lambda function
-
-After the first deploy, the API Gateway endpoint URL is the public URL of the backend.
-
-### 9. Backend Project Structure
-
-```
-app/
-├── domain/
-│   ├── models/              # Domain entities (dataset.py, business.py, order.py)
-│   └── repositories/        # Repository interfaces (i_dataset_repository.py)
-├── application/
-│   └── services/            # Application services (dataset_service.py)
-├── infrastructure/
-│   ├── database/            # SQLAlchemy engine, session, ORM models
-│   ├── repositories/        # Repository implementations
-│   └── errors/              # AppError, DomainValidationError
-└── presentation/
-    ├── routers/             # FastAPI routers (datasets_router.py)
-    └── schemas/             # Pydantic I/O schemas (dataset_schemas.py)
-tests/
-├── unit/
-│   ├── domain/
-│   ├── application/
-│   └── presentation/
-└── integration/
-alembic/                     # Database migrations
-main.py                      # FastAPI app + Mangum Lambda handler
-pyproject.toml
-.env                         ← not committed
-.env.example
-.gitignore
-Makefile
-```
-
-### 10. Makefile Reference
+Cuando cambia `template.yaml`:
 
 ```bash
-make dev          # Start FastAPI dev server
-make test         # Run all tests
-make test-cov     # Tests + coverage report
-make lint         # ruff check + format
-make typecheck    # mypy
-make migrate      # alembic upgrade head
-make db-reset     # supabase db reset
+npm run build && sam build && sam deploy
+```
+
+### Migraciones en producción
+
+Cuando hay nuevas migraciones:
+
+```bash
+DATABASE_URL="postgresql://user:pass@host:5432/scrappy" npx prisma migrate deploy
 ```
 
 ---
 
-## Frontend
+## Variables de entorno
 
-### 1. Install
-
-```bash
-cd scrappy-frontend
-npm install
-```
-
-### 2. Environment Configuration
-
-Create a `.env.local` file at the frontend root (never commit this file):
-
-```env
-# Backend API
-NEXT_PUBLIC_API_URL=http://localhost:8000/v1
-API_BASE_URL=http://localhost:8000/v1
-
-# Supabase (public keys only)
-NEXT_PUBLIC_SUPABASE_URL=http://localhost:54321
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-local-anon-key
-
-# Stripe (public key only)
-NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_...
-```
-
-### 3. Local Development
-
-```bash
-npm run dev
-```
-
-- App available at: `http://localhost:3000`
-
-### 4. Running Tests
-
-```bash
-npm test                  # Run unit tests
-npm run test:watch        # Watch mode
-npm run test:coverage     # With coverage report
-npx playwright test       # Run E2E tests
-```
-
-### 5. Build and Deploy to Vercel
-
-```bash
-npm run build             # Build for production (CI check)
-vercel --prod             # Deploy to Vercel (or push to main for auto-deploy)
-```
-
-### 6. Frontend Project Structure
-
-```
-frontend/
-├── app/
-│   ├── layout.tsx               # Root layout
-│   ├── page.tsx                 # Home page (dataset marketplace)
-│   ├── globals.css
-│   ├── datasets/
-│   │   ├── page.tsx             # Dataset listing page
-│   │   └── [id]/
-│   │       └── page.tsx         # Dataset detail + buy button
-│   ├── orders/
-│   │   ├── page.tsx             # User's order history
-│   │   └── [id]/
-│   │       └── page.tsx         # Order detail + download
-│   └── (auth)/
-│       ├── login/page.tsx
-│       └── register/page.tsx
-├── components/
-│   ├── ui/                      # Button, Input, Card, Badge...
-│   ├── datasets/                # DatasetCard, DatasetFilters, SampleDataTable
-│   └── orders/                  # OrderSummary, DownloadButton
-├── hooks/
-│   ├── useDatasets.ts
-│   └── useOrders.ts
-├── lib/
-│   ├── api/                     # datasetsApi.ts, ordersApi.ts
-│   ├── supabase/                # Supabase client
-│   └── utils/                   # cn.ts, formatCurrency.ts, formatDate.ts
-├── types/                       # Dataset, Order, Business, User interfaces
-├── e2e/                         # Playwright E2E tests
-├── __tests__/
-├── tailwind.config.ts
-├── next.config.ts
-├── tsconfig.json
-├── .env.local                   ← not committed
-├── .env.example
-└── package.json
-```
-
-### 7. NPM Scripts Reference
-
-```bash
-npm run dev            # Start Next.js dev server
-npm run build          # Build for production
-npm start              # Start production server
-npm test               # Run unit tests
-npm run test:watch     # Tests in watch mode
-npm run test:coverage  # Tests + coverage report
-npm run lint           # Run ESLint
-npx playwright test    # Run E2E tests
-```
+| Variable | Local (`.env`) | Producción (SSM) | Descripción |
+|---|---|---|---|
+| `DATABASE_URL` | PostgreSQL local | `/scrappy/database-url` | Connection string de PostgreSQL |
+| `JWT_SECRET` | String aleatorio | `/scrappy/jwt-secret` | Secret para firmar access tokens |
+| `JWT_REFRESH_SECRET` | String aleatorio | `/scrappy/jwt-refresh-secret` | Reservado para futuro uso |
+| `SES_FROM_EMAIL` | Email verificado | `/scrappy/ses-from-email` | Email remitente (SES) |
+| `FRONTEND_URL` | `http://localhost:3001` | `/scrappy/frontend-url` | URL frontend (CORS + emails) |
+| `AWS_REGION` | `us-east-1` | Lambda env | Región de AWS |
+| `PORT` | `3000` | — | Solo para desarrollo local |
 
 ---
 
-## OpenSpec Files
+## Referencia de comandos
 
-```
-openspec/
-├── specs/
-│   ├── base-standards.mdc          # Core principles (all agents)
-│   ├── backend-standards.mdc       # FastAPI, Python, Supabase standards
-│   ├── frontend-standards.mdc      # Next.js App Router standards
-│   ├── documentation-standards.mdc # Docs and AI spec maintenance rules
-│   ├── api-spec.yml                # OpenAPI 3.0 spec (source of truth)
-│   ├── data-model.md               # Supabase/PostgreSQL relational schema
-│   └── development_guide.md        # This file
-└── .commands/
-    ├── plan-backend-ticket.md
-    ├── plan-frontend-ticket.md
-    ├── develop-backend.md
-    ├── develop-frontend.md
-    └── update-docs.md
+```bash
+npm run start:dev          # Dev server con hot reload
+npm run build              # Compilar TypeScript
+npm run test               # Unit tests
+npm run test:e2e           # E2E tests
+npm run lint               # ESLint
+npm run format             # Prettier
+npx prisma migrate dev     # Crear y aplicar migración local
+npx prisma migrate deploy  # Aplicar migraciones en producción
+npx prisma studio          # UI visual de la DB
+sam build                  # Empaquetar con esbuild
+sam deploy                 # Desplegar a AWS
+sam local start-api        # Simular Lambda localmente
 ```

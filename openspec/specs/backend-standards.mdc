@@ -8,7 +8,7 @@ alwaysApply: true
 
 ## Stack
 
-- **Framework**: NestJS 10 + TypeScript (strict)
+- **Framework**: NestJS 11 + TypeScript (strict)
 - **ORM**: Prisma 7 (adapter-pg)
 - **Database**: PostgreSQL (AWS RDS)
 - **Auth**: JWT (access 15m + refresh 7d) + bcrypt

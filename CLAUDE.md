@@ -26,7 +26,7 @@ alwaysApply: true
 
 **Product**: Scrappy — an on-demand business data marketplace. Users purchase scraping jobs for a specific business category and geographic zone. After payment, scraping runs asynchronously and the result (CSV, Excel, or JSON) is available for download.
 
-**Backend Stack**: NestJS 10 · TypeScript (strict) · Prisma 7 · PostgreSQL (AWS RDS) · JWT auth · AWS SES · @vendia/serverless-express
+**Backend Stack**: NestJS 11 · TypeScript (strict) · Prisma 7 · PostgreSQL (AWS RDS) · JWT auth · AWS SES · @vendia/serverless-express
 
 **Infrastructure**: AWS Lambda + API Gateway HTTP (SAM) · AWS RDS PostgreSQL · AWS SES
 

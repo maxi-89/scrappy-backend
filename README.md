@@ -4,7 +4,7 @@ NestJS REST API for Scrappy — an on-demand business data marketplace.
 
 ## Stack
 
-- **NestJS 10** + TypeScript (strict)
+- **NestJS 11** + TypeScript (strict)
 - **Prisma 7** ORM → PostgreSQL (AWS RDS)
 - **JWT** auth (access 15m + refresh 7d) + bcrypt
 - **AWS SES** for transactional email
@@ -26,7 +26,7 @@ NestJS REST API for Scrappy — an on-demand business data marketplace.
 
 ### Prerequisites
 
-- Node.js 20+
+- Node.js 22+
 - PostgreSQL running locally (or AWS RDS URL)
 - AWS credentials configured (for SES in dev)
 
