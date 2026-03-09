@@ -1,845 +1,237 @@
 openapi: 3.0.3
 info:
   title: Scrappy API
-  description: |
-    Scrappy is an on-demand business data marketplace.
-    Users purchase scraping jobs for a specific business category and geographic zone.
-    After payment, the scraping runs asynchronously and the result is delivered by email
-    and available for download in CSV, Excel, or JSON format.
-
-    **Authentication**: Protected endpoints require a Bearer token (Auth0 JWT).
-    **Admin endpoints**: Require an additional `X-Admin-Key` header.
-  version: 1.0.0
+  description: Scrappy backend — authentication endpoints
+  version: 2.0.0
   contact:
-    name: Scrappy Team
+    email: maxi.rodriguez.3105@gmail.com
 
 servers:
   - url: https://api.scrappy.io
     description: Production
-  - url: http://localhost:8000
-    description: Local development
-
-security: []
+  - url: http://localhost:3000
+    description: Local dev
 
 tags:
-  - name: offers
-    description: Available scraping service offerings
-  - name: orders
-    description: Purchase flow, scraping status and result download
   - name: auth
-    description: Registration and login (Auth0)
-  - name: admin
-    description: Internal operations — offers, scraping, pricing, orders
+    description: Authentication and session management
 
 paths:
-
-  # ─────────────────────────────────────────────────────────────────
-  # OFFERS (public)
-  # ─────────────────────────────────────────────────────────────────
-
-  /offers:
-    get:
-      summary: List active offers
-      description: |
-        Returns all active scraping offers. Optionally pass `zone` to get the dynamic
-        price for that zone included in each offer.
-      operationId: listOffers
-      tags: [offers]
-      parameters:
-        - name: zone
-          in: query
-          description: Zone to resolve dynamic pricing for
-          schema:
-            type: string
-          example: CABA
-      responses:
-        '200':
-          description: List of active offers
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/OfferResponse'
-        '500':
-          $ref: '#/components/responses/InternalError'
-
-  /offers/{offer_id}:
-    get:
-      summary: Get offer detail
-      description: Returns offer metadata. Pass `zone` to get the dynamic price for that zone.
-      operationId: getOffer
-      tags: [offers]
-      parameters:
-        - $ref: '#/components/parameters/OfferId'
-        - name: zone
-          in: query
-          description: Zone to resolve dynamic pricing for
-          schema:
-            type: string
-          example: CABA
-      responses:
-        '200':
-          description: Offer detail with optional zone price
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/OfferResponse'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '500':
-          $ref: '#/components/responses/InternalError'
-
-  # ─────────────────────────────────────────────────────────────────
-  # ORDERS (authenticated buyers)
-  # ─────────────────────────────────────────────────────────────────
-
-  /orders:
+  /auth/signup:
     post:
-      summary: Create an order (initiate purchase)
-      description: |
-        Creates a pending order for a specific offer and zone, and returns a Stripe
-        PaymentIntent client secret. The client completes payment on the frontend.
-        The Stripe webhook confirms payment and triggers the scraping job.
-      operationId: createOrder
-      tags: [orders]
-      security:
-        - BearerAuth: []
+      tags: [auth]
+      summary: Register a new user
+      operationId: signup
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateOrderRequest'
+              $ref: '#/components/schemas/SignupRequest'
       responses:
         '201':
-          description: Order created, payment intent returned
+          description: User created, tokens returned
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CreateOrderResponse'
+                $ref: '#/components/schemas/TokenPair'
         '400':
           $ref: '#/components/responses/ValidationError'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '500':
-          $ref: '#/components/responses/InternalError'
+        '409':
+          $ref: '#/components/responses/ConflictError'
 
-    get:
-      summary: List current user's orders
-      operationId: listMyOrders
-      tags: [orders]
-      security:
-        - BearerAuth: []
-      responses:
-        '200':
-          description: List of orders
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/OrderResponse'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '500':
-          $ref: '#/components/responses/InternalError'
-
-  /orders/{order_id}:
-    get:
-      summary: Get order detail
-      description: Returns order details including the linked scraping job status.
-      operationId: getOrder
-      tags: [orders]
-      security:
-        - BearerAuth: []
-      parameters:
-        - $ref: '#/components/parameters/OrderId'
-      responses:
-        '200':
-          description: Order detail with scraping job status
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/OrderDetailResponse'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '500':
-          $ref: '#/components/responses/InternalError'
-
-  /orders/{order_id}/download:
-    get:
-      summary: Download scraping result
-      description: |
-        Returns the scraping result file in the format chosen at order creation
-        (CSV, Excel, or JSON). Only available when order status is `completed`.
-        Records the download timestamp on first access.
-      operationId: downloadResult
-      tags: [orders]
-      security:
-        - BearerAuth: []
-      parameters:
-        - $ref: '#/components/parameters/OrderId'
-      responses:
-        '200':
-          description: Result file in the requested format
-          content:
-            text/csv:
-              schema:
-                type: string
-                format: binary
-            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
-              schema:
-                type: string
-                format: binary
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/BusinessRecord'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '500':
-          $ref: '#/components/responses/InternalError'
-
-  # ─────────────────────────────────────────────────────────────────
-  # WEBHOOKS
-  # ─────────────────────────────────────────────────────────────────
-
-  /webhooks/stripe:
+  /auth/login:
     post:
-      summary: Stripe payment webhook
-      description: |
-        Receives Stripe webhook events. Verifies the `Stripe-Signature` header.
-        On `payment_intent.succeeded`:
-          1. Marks the order as `paid`.
-          2. Triggers an AWS Step Functions scraping execution for the order's category and zone.
-          3. Sends a confirmation email to the buyer.
-        On scraping completion, the order transitions to `completed` and a download-ready
-        email is sent.
-      operationId: stripeWebhook
-      tags: [orders]
+      tags: [auth]
+      summary: Authenticate and receive tokens
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Tokens returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPair'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /auth/logout:
+    post:
+      tags: [auth]
+      summary: Invalidate refresh token
+      operationId: logout
+      security:
+        - bearerAuth: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-      responses:
-        '200':
-          description: Webhook processed
-        '400':
-          $ref: '#/components/responses/ValidationError'
-        '500':
-          $ref: '#/components/responses/InternalError'
-
-  # ─────────────────────────────────────────────────────────────────
-  # ADMIN — SCRAPING JOBS
-  # ─────────────────────────────────────────────────────────────────
-
-  /admin/scraping-jobs:
-    post:
-      summary: Trigger a scraping job (admin)
-      description: Starts a Step Functions execution to scrape businesses from Google Maps for a given category and zone.
-      operationId: createScrapingJob
-      tags: [admin]
-      security:
-        - AdminKey: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateScrapingJobRequest'
-      responses:
-        '202':
-          description: Scraping job accepted and queued
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ScrapingJobResponse'
-        '400':
-          $ref: '#/components/responses/ValidationError'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '500':
-          $ref: '#/components/responses/InternalError'
-
-    get:
-      summary: List scraping jobs
-      operationId: listScrapingJobs
-      tags: [admin]
-      security:
-        - AdminKey: []
-      parameters:
-        - name: status
-          in: query
-          schema:
-            type: string
-            enum: [pending, running, completed, failed]
-      responses:
-        '200':
-          description: List of scraping jobs
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/ScrapingJobResponse'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '500':
-          $ref: '#/components/responses/InternalError'
-
-  /admin/scraping-jobs/{job_id}:
-    get:
-      summary: Get scraping job status
-      operationId: getScrapingJob
-      tags: [admin]
-      security:
-        - AdminKey: []
-      parameters:
-        - name: job_id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      responses:
-        '200':
-          description: Scraping job details
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ScrapingJobResponse'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '500':
-          $ref: '#/components/responses/InternalError'
-
-  # ─────────────────────────────────────────────────────────────────
-  # ADMIN — OFFERS
-  # ─────────────────────────────────────────────────────────────────
-
-  /admin/offers:
-    post:
-      summary: Create a new offer
-      description: Creates a scraping service offering for a given category.
-      operationId: createOffer
-      tags: [admin]
-      security:
-        - AdminKey: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateOfferRequest'
-      responses:
-        '201':
-          description: Offer created
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/OfferAdminResponse'
-        '400':
-          $ref: '#/components/responses/ValidationError'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '500':
-          $ref: '#/components/responses/InternalError'
-
-  /admin/offers/{offer_id}:
-    patch:
-      summary: Update offer metadata or active status
-      operationId: updateOffer
-      tags: [admin]
-      security:
-        - AdminKey: []
-      parameters:
-        - $ref: '#/components/parameters/OfferId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdateOfferRequest'
-      responses:
-        '200':
-          description: Offer updated
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/OfferAdminResponse'
-        '400':
-          $ref: '#/components/responses/ValidationError'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '500':
-          $ref: '#/components/responses/InternalError'
-
-    delete:
-      summary: Delete an offer
-      operationId: deleteOffer
-      tags: [admin]
-      security:
-        - AdminKey: []
-      parameters:
-        - $ref: '#/components/parameters/OfferId'
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
       responses:
         '204':
-          description: Offer deleted
+          description: Logged out successfully
         '401':
-          $ref: '#/components/responses/Unauthorized'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '500':
-          $ref: '#/components/responses/InternalError'
+          $ref: '#/components/responses/UnauthorizedError'
 
-  # ─────────────────────────────────────────────────────────────────
-  # ADMIN — PRICING
-  # ─────────────────────────────────────────────────────────────────
-
-  /admin/pricing:
-    get:
-      summary: List all zone prices
-      description: Returns the full pricing table (zone → price_usd).
-      operationId: listPricing
-      tags: [admin]
-      security:
-        - AdminKey: []
-      responses:
-        '200':
-          description: List of zone prices
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/PricingEntryResponse'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '500':
-          $ref: '#/components/responses/InternalError'
-
-    put:
-      summary: Upsert zone prices
-      description: |
-        Creates or updates pricing entries for one or more zones.
-        Zones not included in the request are not affected.
-      operationId: upsertPricing
-      tags: [admin]
-      security:
-        - AdminKey: []
+  /auth/refresh:
+    post:
+      tags: [auth]
+      summary: Refresh access token using refresh token
+      operationId: refreshToken
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UpsertPricingRequest'
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
       responses:
         '200':
-          description: Pricing updated
+          description: New token pair
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/PricingEntryResponse'
+                $ref: '#/components/schemas/TokenPair'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /auth/forgot-password:
+    post:
+      tags: [auth]
+      summary: Request password reset email
+      operationId: forgotPassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        '204':
+          description: Email sent (even if address not found, for security)
+
+  /auth/reset-password:
+    post:
+      tags: [auth]
+      summary: Reset password using token from email
+      operationId: resetPassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResetPasswordRequest'
+      responses:
+        '204':
+          description: Password reset successfully
         '400':
           $ref: '#/components/responses/ValidationError'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '500':
-          $ref: '#/components/responses/InternalError'
-
-  # ─────────────────────────────────────────────────────────────────
-  # ADMIN — ORDERS
-  # ─────────────────────────────────────────────────────────────────
-
-  /admin/orders:
-    get:
-      summary: List all orders
-      description: Returns all orders across all users. Supports filtering by status.
-      operationId: listAllOrders
-      tags: [admin]
-      security:
-        - AdminKey: []
-      parameters:
-        - name: status
-          in: query
-          schema:
-            type: string
-            enum: [pending, paid, scraping, completed, failed, refunded]
-      responses:
-        '200':
-          description: List of orders
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/OrderDetailResponse'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '500':
-          $ref: '#/components/responses/InternalError'
-
-# ─────────────────────────────────────────────────────────────────
-# COMPONENTS
-# ─────────────────────────────────────────────────────────────────
 
 components:
-
   securitySchemes:
-    BearerAuth:
+    bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: Auth0 RS256 JWT token — validated via JWKS at https://{AUTH0_DOMAIN}/.well-known/jwks.json
-    AdminKey:
-      type: apiKey
-      in: header
-      name: X-Admin-Key
-      description: Internal admin API key for backend operations
-
-  parameters:
-    OfferId:
-      name: offer_id
-      in: path
-      required: true
-      schema:
-        type: string
-        format: uuid
-    OrderId:
-      name: order_id
-      in: path
-      required: true
-      schema:
-        type: string
-        format: uuid
-
-  responses:
-    NotFound:
-      description: Resource not found
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
-    ValidationError:
-      description: Validation error
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
-    Unauthorized:
-      description: Missing or invalid authentication token
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
-    Forbidden:
-      description: Access denied
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
-    InternalError:
-      description: Internal server error
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
 
   schemas:
-
-    # ── Offers ───────────────────────────────────────────────────
-
-    OfferResponse:
+    SignupRequest:
       type: object
-      required: [id, title, category, description, is_active]
+      required: [email, password]
       properties:
-        id:
+        email:
           type: string
-          format: uuid
-        title:
+          format: email
+        password:
           type: string
-          example: Restaurants
-        category:
+          minLength: 8
+        fullName:
           type: string
-          example: restaurants
-        description:
-          type: string
-          example: Full contact list of restaurants including phone, address, website and rating.
-        is_active:
-          type: boolean
-        price_usd:
-          type: number
-          format: float
-          nullable: true
-          description: Price for the requested zone. Present only when `zone` query param is provided.
-          example: 29.99
 
-    OfferAdminResponse:
-      allOf:
-        - $ref: '#/components/schemas/OfferResponse'
-        - type: object
-          properties:
-            created_at:
-              type: string
-              format: date-time
-            updated_at:
-              type: string
-              format: date-time
-
-    CreateOfferRequest:
+    LoginRequest:
       type: object
-      required: [title, category]
+      required: [email, password]
       properties:
-        title:
+        email:
           type: string
-          minLength: 2
-          maxLength: 200
-          example: Restaurants
-        category:
+          format: email
+        password:
           type: string
-          minLength: 2
-          maxLength: 100
-          example: restaurants
-        description:
-          type: string
-          maxLength: 2000
-        is_active:
-          type: boolean
-          default: false
 
-    UpdateOfferRequest:
+    ResetPasswordRequest:
       type: object
+      required: [token, newPassword]
       properties:
-        title:
+        token:
           type: string
-          minLength: 2
-          maxLength: 200
-        description:
+        newPassword:
           type: string
-          maxLength: 2000
-        is_active:
-          type: boolean
+          minLength: 8
 
-    # ── Pricing ──────────────────────────────────────────────────
-
-    PricingEntryResponse:
+    TokenPair:
       type: object
-      required: [id, zone, price_usd]
+      required: [access_token, refresh_token]
       properties:
-        id:
+        access_token:
           type: string
-          format: uuid
-        zone:
+          description: JWT access token (15 minutes TTL)
+        refresh_token:
           type: string
-          example: CABA
-        price_usd:
-          type: number
-          format: float
-          example: 29.99
-
-    UpsertPricingRequest:
-      type: object
-      required: [entries]
-      properties:
-        entries:
-          type: array
-          minItems: 1
-          items:
-            type: object
-            required: [zone, price_usd]
-            properties:
-              zone:
-                type: string
-                minLength: 2
-                maxLength: 100
-                example: CABA
-              price_usd:
-                type: number
-                minimum: 0
-                example: 29.99
-
-    # ── Orders ───────────────────────────────────────────────────
-
-    CreateOrderRequest:
-      type: object
-      required: [offer_id, zone, format]
-      properties:
-        offer_id:
-          type: string
-          format: uuid
-        zone:
-          type: string
-          minLength: 2
-          maxLength: 100
-          example: CABA
-        format:
-          type: string
-          enum: [csv, excel, json]
-          example: csv
-
-    CreateOrderResponse:
-      type: object
-      required: [order_id, client_secret, total_usd]
-      properties:
-        order_id:
-          type: string
-          format: uuid
-        client_secret:
-          type: string
-          description: Stripe PaymentIntent client secret for frontend payment completion
-        total_usd:
-          type: number
-          example: 29.99
-
-    OrderResponse:
-      type: object
-      required: [id, offer_id, zone, format, status, total_usd, created_at]
-      properties:
-        id:
-          type: string
-          format: uuid
-        offer_id:
-          type: string
-          format: uuid
-        offer_title:
-          type: string
-          example: Restaurants
-        zone:
-          type: string
-          example: CABA
-        format:
-          type: string
-          enum: [csv, excel, json]
-        status:
-          type: string
-          enum: [pending, paid, scraping, completed, failed, refunded]
-        total_usd:
-          type: number
-        created_at:
-          type: string
-          format: date-time
-        paid_at:
-          type: string
-          format: date-time
-          nullable: true
-        completed_at:
-          type: string
-          format: date-time
-          nullable: true
-
-    OrderDetailResponse:
-      allOf:
-        - $ref: '#/components/schemas/OrderResponse'
-        - type: object
-          properties:
-            scraping_job:
-              $ref: '#/components/schemas/ScrapingJobResponse'
-              nullable: true
-
-    # ── Businesses ───────────────────────────────────────────────
-
-    BusinessRecord:
-      type: object
-      properties:
-        name:
-          type: string
-          example: La Parolaccia
-        category:
-          type: string
-          example: restaurants
-        zone:
-          type: string
-          example: Palermo
-        address:
-          type: string
-          example: Av. del Libertador 2520, Buenos Aires
-        phone:
-          type: string
-          example: '+5491155512345'
-        website:
-          type: string
-          format: uri
-        rating:
-          type: number
-          minimum: 0
-          maximum: 5
-          example: 4.3
-        review_count:
-          type: integer
-          example: 842
-
-    # ── Scraping Jobs ─────────────────────────────────────────────
-
-    CreateScrapingJobRequest:
-      type: object
-      required: [category, zone]
-      properties:
-        category:
-          type: string
-          minLength: 2
-          maxLength: 100
-          example: restaurants
-        zone:
-          type: string
-          minLength: 2
-          maxLength: 100
-          example: CABA
-
-    ScrapingJobResponse:
-      type: object
-      required: [id, category, zone, status, created_at]
-      properties:
-        id:
-          type: string
-          format: uuid
-        category:
-          type: string
-        zone:
-          type: string
-        status:
-          type: string
-          enum: [pending, running, completed, failed]
-        records_scraped:
-          type: integer
-        error_message:
-          type: string
-          nullable: true
-        started_at:
-          type: string
-          format: date-time
-          nullable: true
-        finished_at:
-          type: string
-          format: date-time
-          nullable: true
-        created_at:
-          type: string
-          format: date-time
-
-    # ── Shared ────────────────────────────────────────────────────
+          description: Opaque refresh token (7 days TTL)
 
     ErrorResponse:
       type: object
-      required: [error]
+      required: [statusCode, message, path, timestamp]
       properties:
-        error:
+        statusCode:
+          type: integer
+        message:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+        path:
           type: string
-          example: Offer not found
+        timestamp:
+          type: string
+          format: date-time
+
+  responses:
+    ValidationError:
+      description: Validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    UnauthorizedError:
+      description: Missing or invalid authentication
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ConflictError:
+      description: Resource already exists
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'

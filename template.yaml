@@ -1,128 +1,83 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-
-Description: Scrappy backend — FastAPI on Lambda + Step Functions scraping workflow
+Description: Scrappy Backend — NestJS Auth API (Lambda + API Gateway HTTP)
 
 Globals:
   Function:
-    Runtime: python3.12
+    Timeout: 30
     MemorySize: 512
+    Runtime: nodejs20.x
+    Architectures:
+      - x86_64
     Environment:
       Variables:
-        DATABASE_URL: "{{resolve:ssm:/scrappy/database-url}}"
+        NODE_ENV: production
+        DATABASE_URL: '{{resolve:ssm:/scrappy/database-url}}'
+        JWT_SECRET: '{{resolve:ssm:/scrappy/jwt-secret}}'
+        JWT_REFRESH_SECRET: '{{resolve:ssm:/scrappy/jwt-refresh-secret}}'
+        SES_FROM_EMAIL: '{{resolve:ssm:/scrappy/ses-from-email}}'
+        FRONTEND_URL: '{{resolve:ssm:/scrappy/frontend-url}}'
+        AWS_NODEJS_CONNECTION_REUSE_ENABLED: '1'
 
 Resources:
-
-  # ── Results S3 Bucket ─────────────────────────────────────────────────────
-  ResultsBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Sub "scrappy-results-${AWS::AccountId}-${AWS::Region}"
-      LifecycleConfiguration:
-        Rules:
-          - Id: ExpireOldResults
-            Status: Enabled
-            ExpirationInDays: 30
-
-  # ── API Lambda (FastAPI + Mangum) ─────────────────────────────────────────
-  ApiFunction:
+  ScrappyApiFunction:
     Type: AWS::Serverless::Function
     Properties:
-      Handler: main.handler
-      Timeout: 30
+      FunctionName: scrappy-api
+      CodeUri: .
+      Handler: dist/lambda.handler
+      Description: Scrappy NestJS API handler
       Policies:
         - Statement:
-            Effect: Allow
-            Action: states:StartExecution
-            Resource: !Ref ScrapingStateMachine
-        - S3ReadPolicy:
-            BucketName: !Ref ResultsBucket
-      Environment:
-        Variables:
-          STATE_MACHINE_ARN: !Ref ScrapingStateMachine
-          ADMIN_API_KEY: "{{resolve:ssm:/scrappy/admin-api-key}}"
-          AUTH0_DOMAIN: "{{resolve:ssm:/scrappy/auth0-domain}}"
-          AUTH0_AUDIENCE: "{{resolve:ssm:/scrappy/auth0-audience}}"
-          STRIPE_SECRET_KEY: "{{resolve:ssm:/scrappy/stripe-secret-key}}"
-          STRIPE_WEBHOOK_SECRET: "{{resolve:ssm:/scrappy/stripe-webhook-secret}}"
-          RESULTS_BUCKET: !Ref ResultsBucket
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+                - ses:SendRawEmail
+              Resource: '*'
       Events:
-        Api:
+        ApiProxy:
           Type: HttpApi
           Properties:
+            ApiId: !Ref ScrappyHttpApi
             Path: /{proxy+}
             Method: ANY
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: false
+        Target: es2020
+        Sourcemap: false
+        EntryPoints:
+          - src/lambda.ts
+        External:
+          - '@aws-sdk/client-ses'
+          - '@prisma/client'
+          - '@prisma/adapter-pg'
+          - pg
 
-  # ── Scraping Lambdas ──────────────────────────────────────────────────────
-  ScrapingInitFunction:
-    Type: AWS::Serverless::Function
+  ScrappyHttpApi:
+    Type: AWS::Serverless::HttpApi
     Properties:
-      Handler: lambdas.scraping_init_handler.handler
-      Timeout: 30
-
-  ScrapingScraperFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      Handler: lambdas.scraping_scraper_handler.handler
-      Timeout: 300
-      Environment:
-        Variables:
-          GOOGLE_MAPS_API_KEY: "{{resolve:ssm:/scrappy/google-maps-api-key}}"
-
-  ScrapingNormalizerFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      Handler: lambdas.scraping_normalizer_handler.handler
-      Timeout: 60
-
-  ScrapingSaverFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      Handler: lambdas.scraping_saver_handler.handler
-      Timeout: 60
-      Policies:
-        - S3WritePolicy:
-            BucketName: !Ref ResultsBucket
-      Environment:
-        Variables:
-          RESULTS_BUCKET: !Ref ResultsBucket
-
-  ScrapingMarkFailedFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      Handler: lambdas.scraping_mark_failed_handler.handler
-      Timeout: 30
-
-  # ── State Machine ─────────────────────────────────────────────────────────
-  ScrapingStateMachine:
-    Type: AWS::Serverless::StateMachine
-    Properties:
-      DefinitionUri: statemachine/scraping_workflow.asl.json
-      DefinitionSubstitutions:
-        ScrapingInitFunctionArn: !GetAtt ScrapingInitFunction.Arn
-        ScrapingScraperFunctionArn: !GetAtt ScrapingScraperFunction.Arn
-        ScrapingNormalizerFunctionArn: !GetAtt ScrapingNormalizerFunction.Arn
-        ScrapingSaverFunctionArn: !GetAtt ScrapingSaverFunction.Arn
-        ScrapingMarkFailedFunctionArn: !GetAtt ScrapingMarkFailedFunction.Arn
-      Policies:
-        - LambdaInvokePolicy:
-            FunctionName: !Ref ScrapingInitFunction
-        - LambdaInvokePolicy:
-            FunctionName: !Ref ScrapingScraperFunction
-        - LambdaInvokePolicy:
-            FunctionName: !Ref ScrapingNormalizerFunction
-        - LambdaInvokePolicy:
-            FunctionName: !Ref ScrapingSaverFunction
-        - LambdaInvokePolicy:
-            FunctionName: !Ref ScrapingMarkFailedFunction
+      StageName: '$default'
+      CorsConfiguration:
+        AllowOrigins:
+          - '{{resolve:ssm:/scrappy/frontend-url}}'
+        AllowMethods:
+          - GET
+          - POST
+          - PUT
+          - PATCH
+          - DELETE
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+          - Authorization
+        AllowCredentials: true
 
 Outputs:
   ApiUrl:
-    Description: API Gateway endpoint URL
-    Value: !Sub "https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
-  StateMachineArn:
-    Description: Scraping State Machine ARN
-    Value: !Ref ScrapingStateMachine
-  ResultsBucketName:
-    Description: S3 bucket for scraping result files
-    Value: !Ref ResultsBucket
+    Description: API Gateway HTTP API endpoint URL
+    Value: !Sub 'https://${ScrappyHttpApi}.execute-api.${AWS::Region}.amazonaws.com'
+  FunctionArn:
+    Description: Lambda function ARN
+    Value: !GetAtt ScrappyApiFunction.Arn

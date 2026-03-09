@@ -18,28 +18,58 @@ alwaysApply: true
 - **English Only**: All technical artifacts must always use English, including:
   - Code (variables, functions, classes, comments, error messages, log messages)
   - Documentation (README, guides, API docs)
-  - Data schemas and DynamoDB attribute names
   - Configuration files and scripts
   - Git commit messages
   - Test names and descriptions
 
 ## 3. Project Context
 
-**Product**: Scrappy — a business data marketplace. Scrapes, cleans, normalizes, and sells datasets of businesses obtained from Google Maps. Datasets are segmented by category, geographic zone, or business type.
+**Product**: Scrappy — an on-demand business data marketplace. Users purchase scraping jobs for a specific business category and geographic zone. After payment, scraping runs asynchronously and the result (CSV, Excel, or JSON) is available for download.
 
-**Backend Stack**: Python 3.12 · FastAPI · Pydantic v2 · SQLAlchemy 2.0 · Supabase (PostgreSQL) · pytest · Mangum (AWS Lambda adapter)
+**Backend Stack**: NestJS 10 · TypeScript (strict) · Prisma 7 · PostgreSQL (AWS RDS) · JWT auth · AWS SES · @vendia/serverless-express
 
-**Frontend Stack**: Next.js (App Router) · TypeScript (strict) · Tailwind CSS · Jest + React Testing Library · Playwright
+**Infrastructure**: AWS Lambda + API Gateway HTTP (SAM) · AWS RDS PostgreSQL · AWS SES
 
-**Infrastructure**: Vercel (frontend) · AWS Lambda via Mangum (backend) · Supabase (managed PostgreSQL)
+## 4. Key Commands
 
-## 4. Specific Standards
+```bash
+# Development
+npm run start:dev          # Local dev server (port 3000)
+npm run build              # Compile TypeScript
+
+# Database
+npx prisma generate        # Regenerate Prisma client
+npx prisma migrate dev     # Create and run migration (local)
+npx prisma migrate deploy  # Run pending migrations (production)
+npx prisma studio          # Visual DB browser
+
+# Tests
+npm run test               # Unit tests
+npm run test:e2e           # E2E tests
+
+# Lambda / SAM
+sam build                  # Build Lambda package
+sam deploy                 # Deploy to AWS
+sam local start-api        # Local Lambda simulation
+```
+
+## 5. Environment Variables
+
+Copy `.env.example` to `.env` and fill in:
+
+| Variable           | Description                        |
+|--------------------|------------------------------------|
+| DATABASE_URL       | PostgreSQL connection string       |
+| JWT_SECRET         | Secret for signing access tokens   |
+| JWT_REFRESH_SECRET | Secret for refresh token validation|
+| SES_FROM_EMAIL     | Verified SES sender email          |
+| FRONTEND_URL       | Frontend URL for reset email link  |
+| AWS_REGION         | AWS region (default: us-east-1)    |
+
+## 6. Specific Standards
 
 For detailed standards refer to:
 
-- [Backend Standards](./openspec/specs/backend-standards.mdc) — FastAPI, Python, Supabase, DDD architecture, testing, error handling
-- [Frontend Standards](./openspec/specs/frontend-standards.mdc) — Next.js App Router, Tailwind CSS, Server/Client Components, data fetching
-- [Documentation Standards](./openspec/specs/documentation-standards.mdc) — docs structure and maintenance
+- [Backend Standards](./openspec/specs/backend-standards.mdc) — NestJS, Prisma, JWT, testing, error handling
 - [API Spec](./openspec/specs/api-spec.yml) — OpenAPI 3.0 spec (source of truth for endpoints)
-- [Data Model](./openspec/specs/data-model.md) — Supabase/PostgreSQL relational schema
-- [Development Guide](./openspec/specs/development_guide.md) — setup and deployment instructions
+- [Data Model](./openspec/specs/data-model.md) — PostgreSQL schema (3 tables: User, RefreshToken, PasswordResetToken)

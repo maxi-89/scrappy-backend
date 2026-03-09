@@ -1,243 +1,129 @@
 # Scrappy Backend
 
-FastAPI backend for the Scrappy on-demand business data marketplace. Runs on AWS Lambda via Mangum, with an async scraping pipeline powered by AWS Step Functions.
+NestJS REST API for Scrappy — an on-demand business data marketplace.
 
-**Stack**: Python 3.12 · FastAPI · Pydantic v2 · SQLAlchemy 2.0 · Supabase (PostgreSQL) · AWS Lambda · AWS Step Functions · S3 · Stripe · Auth0 · pytest
+## Stack
 
----
+- **NestJS 10** + TypeScript (strict)
+- **Prisma 7** ORM → PostgreSQL (AWS RDS)
+- **JWT** auth (access 15m + refresh 7d) + bcrypt
+- **AWS SES** for transactional email
+- **@vendia/serverless-express** → AWS Lambda
+- **AWS SAM** for infrastructure (Lambda + API Gateway HTTP)
 
-## How it works
+## Auth Endpoints
 
-1. User browses **offers** (scraping packages by category) and selects a zone.
-2. User creates an **order** → Stripe PaymentIntent is returned.
-3. User completes payment → Stripe fires a webhook → order marked `paid`.
-4. **Step Functions** scraping pipeline starts automatically:
-   - `InitJob` → `ScrapeBusinesses` (Google Maps) → `NormalizeBusinesses` → `SaveBusinesses` → `Done`
-   - On failure: `MarkFailed` updates order and job status.
-5. Result file (CSV / Excel / JSON) is uploaded to S3. Order marked `completed`.
-6. User downloads result via `GET /orders/{id}/download`.
+| Method | Path                    | Auth   | Description                    |
+|--------|-------------------------|--------|--------------------------------|
+| POST   | `/auth/signup`          | Public | Register (email + password)    |
+| POST   | `/auth/login`           | Public | Login → access + refresh token |
+| POST   | `/auth/logout`          | Bearer | Invalidate refresh token       |
+| POST   | `/auth/refresh`         | —      | Rotate refresh → new pair      |
+| POST   | `/auth/forgot-password` | Public | Send reset email via SES       |
+| POST   | `/auth/reset-password`  | Public | Reset password with token      |
 
----
+## Local Setup
 
-## Prerequisites
+### Prerequisites
 
-- Python 3.12+
-- [uv](https://github.com/astral-sh/uv) — fast Python package manager
-- [AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html) — for infrastructure deployment
+- Node.js 20+
+- PostgreSQL running locally (or AWS RDS URL)
+- AWS credentials configured (for SES in dev)
 
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
----
-
-## Setup
-
-### 1. Install dependencies
+### Install
 
 ```bash
-uv sync
+npm install
 ```
 
-### 2. Configure environment variables
+### Configure
 
 ```bash
 cp .env.example .env
+# Fill in DATABASE_URL, JWT_SECRET, JWT_REFRESH_SECRET, SES_FROM_EMAIL, FRONTEND_URL
 ```
 
-| Variable | Required | Description |
-|---|---|---|
-| `DATABASE_URL` | Yes | PostgreSQL connection string (`postgresql+asyncpg://...`) |
-| `AUTH0_DOMAIN` | Yes | Auth0 tenant domain (e.g. `your-tenant.us.auth0.com`) |
-| `AUTH0_AUDIENCE` | Yes | Auth0 API audience (e.g. `https://api.scrappy.io`) |
-| `STRIPE_SECRET_KEY` | Yes | Stripe secret key (`sk_test_...` or `sk_live_...`) |
-| `STRIPE_WEBHOOK_SECRET` | Yes | Stripe webhook signing secret (`whsec_...`) |
-| `ADMIN_API_KEY` | Yes | Secret key for admin-only endpoints (`X-Admin-Key` header) |
-| `GOOGLE_MAPS_API_KEY` | Yes | Google Maps API key for scraping |
-| `STATE_MACHINE_ARN` | Yes | ARN of the Step Functions state machine (set after first deploy) |
-| `RESULTS_BUCKET` | Yes | S3 bucket name for result files (set after first deploy) |
-| `AWS_REGION` | No | AWS region (default: `us-east-1`) |
-| `ENVIRONMENT` | No | `development` \| `production` (default: `development`) |
-
-> Never commit `.env` to version control.
-
-### 3. Apply database migrations
+### Database
 
 ```bash
-uv run alembic upgrade head
+npx prisma migrate dev --name init
+npx prisma generate
 ```
 
----
-
-## Run locally
+### Run
 
 ```bash
-uv run uvicorn main:app --reload --port 8000
+npm run start:dev
+# API available at http://localhost:3000
 ```
-
-- API: `http://localhost:8000`
-- Swagger UI: `http://localhost:8000/docs`
-- ReDoc: `http://localhost:8000/redoc`
-
----
-
-## API endpoints
-
-### Public
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/offers` | List active offers (optional `?zone=` for pricing) |
-| `GET` | `/offers/{id}` | Get offer detail |
-
-### Authenticated (Bearer token required)
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/auth/sync` | Sync Auth0 user on first login |
-| `POST` | `/orders` | Create order and get Stripe PaymentIntent |
-| `GET` | `/orders` | List own orders |
-| `GET` | `/orders/{id}` | Get order detail with scraping job status |
-| `GET` | `/orders/{id}/download` | Download result file (CSV / Excel / JSON) |
-
-### Webhooks
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/webhooks/stripe` | Stripe webhook — confirms payment and triggers scraping |
-
-### Admin (`X-Admin-Key` header required)
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/admin/offers` | Create offer |
-| `PATCH` | `/admin/offers/{id}` | Update offer |
-| `DELETE` | `/admin/offers/{id}` | Delete offer |
-| `GET` | `/admin/pricing` | List pricing entries |
-| `PUT` | `/admin/pricing` | Upsert pricing entries (by zone) |
-| `GET` | `/admin/orders` | List all orders (optional `?status=` filter) |
-| `POST` | `/admin/scraping-jobs` | Trigger scraping job manually |
-| `GET` | `/admin/scraping-jobs` | List scraping jobs (optional `?status=` filter) |
-| `GET` | `/admin/scraping-jobs/{id}` | Get scraping job detail |
-
----
 
 ## Tests
 
 ```bash
-# Run all tests
-uv run pytest
-
-# With coverage report
-uv run pytest --cov=app --cov-report=term-missing
-
-# Unit tests only
-uv run pytest tests/unit/
+npm run test          # unit tests
+npm run test:e2e      # e2e tests (requires test DB)
 ```
-
-Coverage threshold: **90%**
-
----
-
-## Linting and type checking
-
-```bash
-uv run ruff check . --fix
-uv run ruff format .
-uv run mypy app/
-```
-
----
 
 ## Deploy to AWS
 
-Infrastructure is defined in `template.yaml` (AWS SAM). It provisions:
-- **API Lambda** — FastAPI + Mangum
-- **5 scraping Lambdas** — Init, Scraper, Normalizer, Saver, MarkFailed
-- **Step Functions state machine** — orchestrates the scraping pipeline
-- **S3 bucket** — stores result files (30-day lifecycle)
+### 1. Create SSM Parameters
 
-All secrets are sourced from **AWS SSM Parameter Store** at deploy time (no env vars in the template).
+```bash
+aws ssm put-parameter --name /scrappy/database-url \
+  --value "postgresql://user:pass@host:5432/scrappy" --type SecureString
 
-### First deploy
+aws ssm put-parameter --name /scrappy/jwt-secret \
+  --value "$(openssl rand -hex 32)" --type SecureString
+
+aws ssm put-parameter --name /scrappy/jwt-refresh-secret \
+  --value "$(openssl rand -hex 32)" --type SecureString
+
+aws ssm put-parameter --name /scrappy/ses-from-email \
+  --value "maxi.rodriguez.3105@gmail.com" --type String
+
+aws ssm put-parameter --name /scrappy/frontend-url \
+  --value "https://scrappy.io" --type String
+```
+
+### 2. Build and Deploy
 
 ```bash
 sam build
-sam deploy --guided
+sam deploy   # uses samconfig.toml
 ```
 
-Follow the prompts. After deploy, copy the `STATE_MACHINE_ARN` and `RESULTS_BUCKET` outputs to your Lambda environment variables (and `.env` for local dev).
-
-### Subsequent deploys
+### 3. Run migrations against production DB
 
 ```bash
-sam build && sam deploy
+DATABASE_URL="postgresql://..." npx prisma migrate deploy
 ```
 
-### Required SSM parameters
-
-Create these in SSM Parameter Store before deploying:
-
-| Parameter | Description |
-|---|---|
-| `/scrappy/database-url` | Supabase connection string |
-| `/scrappy/admin-api-key` | Admin secret key |
-| `/scrappy/auth0-domain` | Auth0 domain |
-| `/scrappy/auth0-audience` | Auth0 audience |
-| `/scrappy/stripe-secret-key` | Stripe secret key |
-| `/scrappy/stripe-webhook-secret` | Stripe webhook secret |
-| `/scrappy/google-maps-api-key` | Google Maps API key |
-
-### CI/CD
-
-Deployment is automated via **GitHub Actions** on every version tag pushed to `master`.
-
-```bash
-git tag v1.0.0 && git push origin v1.0.0
-```
-
-Required GitHub secret:
-
-| Secret | Description |
-|---|---|
-| `AWS_DEPLOY_ROLE_ARN` | ARN of the IAM role for GitHub OIDC |
-
----
-
-## Project structure
+## Project Structure
 
 ```
-app/
-├── domain/
-│   ├── models/              # Domain entities (Order, Offer, Pricing, Business, ...)
-│   └── repositories/        # Repository interfaces (ABCs)
-├── application/
-│   ├── services/            # OrderService, OfferService, PricingService, WebhookService, ...
-│   └── workers/             # BusinessNormalizer, ScrapingWorker
-├── infrastructure/
-│   ├── database/            # SQLAlchemy session and ORM models
-│   ├── auth/                # Auth0 JWT verifier
-│   ├── aws/                 # S3Client, SfnClient
-│   ├── stripe/              # StripeClient
-│   ├── repositories/        # SQLAlchemy repository implementations
-│   └── errors/              # AppError
-└── presentation/
-    ├── routers/             # FastAPI routers
-    └── schemas/             # Pydantic request/response schemas
-lambdas/                     # Step Functions Lambda handlers
-statemachine/
-│   └── scraping_workflow.asl.json   # Step Functions ASL definition
-tests/
-├── unit/
-│   ├── domain/
-│   ├── application/
-│   ├── infrastructure/
-│   ├── lambdas/
-│   └── presentation/
-alembic/                     # Database migrations
-template.yaml                # AWS SAM infrastructure definition
-samconfig.toml               # SAM deploy configuration
-main.py                      # FastAPI app + Mangum Lambda handler
-pyproject.toml
-.env.example
+src/
+├── auth/           # Auth module (controller, service, DTOs, strategy, guard)
+├── users/          # Users module (service, repository)
+├── mail/           # Mail module (SES service)
+├── prisma/         # PrismaService (global)
+├── common/
+│   └── filters/    # HttpExceptionFilter
+├── app.module.ts
+├── main.ts         # Local dev entry point
+└── lambda.ts       # AWS Lambda handler
+prisma/
+└── schema.prisma   # Database schema
+template.yaml       # AWS SAM definition
 ```
 
----
+## Environment Variables
 
-For full setup including Supabase local dev and detailed deployment guide, see [`openspec/specs/development_guide.md`](./openspec/specs/development_guide.md).
+| Variable            | Required | Description                        |
+|---------------------|----------|------------------------------------|
+| DATABASE_URL        | Yes      | PostgreSQL connection string       |
+| JWT_SECRET          | Yes      | Access token signing secret        |
+| JWT_REFRESH_SECRET  | Yes      | Reserved for refresh token signing |
+| SES_FROM_EMAIL      | Yes      | Verified SES sender address        |
+| FRONTEND_URL        | Yes      | Used in password reset email link  |
+| AWS_REGION          | No       | Default: us-east-1                 |
+| PORT                | No       | Local dev port (default: 3000)     |

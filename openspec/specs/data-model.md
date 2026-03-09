@@ -2,183 +2,66 @@
 
 ## Overview
 
-Scrappy uses **Supabase (PostgreSQL)** as its primary database. All tables follow a relational model with UUID primary keys, timestamptz timestamps, and snake_case naming.
-
-> **Source of truth**: This file must be kept in sync with Alembic migrations and ORM models. Update it whenever a table, column, or index changes.
+Scrappy uses **PostgreSQL** (AWS RDS) as its primary database, managed via **Prisma ORM**.
+All tables use UUID primary keys and camelCase field names in the Prisma schema.
 
 ---
 
 ## Tables
 
-### `businesses`
+### User
 
-Raw scraped business records obtained from Google Maps.
+Stores registered users with hashed passwords.
 
-| Column | Type | Constraints | Description |
-|---|---|---|---|
-| `id` | `uuid` | PK, default `gen_random_uuid()` | Unique business record ID |
-| `scraping_job_id` | `uuid` | NOT NULL, FK → `scraping_jobs.id` ON DELETE CASCADE | Job that produced this record |
-| `name` | `text` | NOT NULL | Business name |
-| `category` | `text` | NOT NULL | Business category (e.g. `restaurants`, `clinics`) |
-| `zone` | `text` | NOT NULL | Geographic zone (e.g. `CABA`, `Palermo`) |
-| `address` | `text` | | Full address |
-| `phone` | `text` | | Phone number |
-| `website` | `text` | | Website URL |
-| `google_maps_url` | `text` | | Google Maps listing URL |
-| `rating` | `numeric(2,1)` | | Rating 0.0–5.0 |
-| `review_count` | `integer` | default 0 | Number of Google reviews |
-| `latitude` | `numeric(10,7)` | | GPS latitude |
-| `longitude` | `numeric(10,7)` | | GPS longitude |
-| `is_verified` | `boolean` | default false | Data quality flag |
-| `scraped_at` | `timestamptz` | NOT NULL | When the record was scraped |
-| `created_at` | `timestamptz` | NOT NULL, default `now()` | Record creation time |
+| Column         | Type      | Constraints           |
+|----------------|-----------|-----------------------|
+| id             | UUID      | PK, default uuid()    |
+| email          | String    | UNIQUE, NOT NULL      |
+| passwordHash   | String    | NOT NULL              |
+| fullName       | String?   | nullable              |
+| createdAt      | DateTime  | default now()         |
+| updatedAt      | DateTime  | auto-updated          |
 
-**Indexes**: `scraping_job_id`, `category`, `zone`, `(category, zone)`
+Relations: `refreshTokens []RefreshToken`, `passwordResetTokens []PasswordResetToken`
 
 ---
 
-### `scraping_jobs`
+### RefreshToken
 
-Tracks background scraping tasks. Jobs can be created in two ways:
-- **Admin-triggered** (`POST /admin/scraping-jobs`): `order_id` is NULL
-- **Order-triggered** (SCRUM-19): `order_id` references the paid order that triggered this scrape
+Stores opaque refresh tokens. Rotated on each use.
 
-| Column | Type | Constraints | Description |
-|---|---|---|---|
-| `id` | `uuid` | PK, default `gen_random_uuid()` | Job ID |
-| `order_id` | `uuid` | nullable, FK → `orders.id` ON DELETE SET NULL | Associated order (NULL for admin-triggered jobs) |
-| `category` | `text` | NOT NULL | Target category to scrape |
-| `zone` | `text` | NOT NULL | Target geographic zone |
-| `status` | `text` | NOT NULL | `pending` \| `running` \| `completed` \| `failed` |
-| `records_scraped` | `integer` | default 0 | Number of records collected |
-| `error_message` | `text` | | Error details if failed |
-| `started_at` | `timestamptz` | | When job started running |
-| `finished_at` | `timestamptz` | | When job completed or failed |
-| `created_at` | `timestamptz` | NOT NULL, default `now()` | Job creation time |
-
-**Indexes**: `status`, `order_id`
+| Column    | Type     | Constraints           |
+|-----------|----------|-----------------------|
+| id        | UUID     | PK, default uuid()    |
+| token     | String   | UNIQUE, NOT NULL      |
+| userId    | String   | FK → User(id) CASCADE |
+| expiresAt | DateTime | NOT NULL              |
+| createdAt | DateTime | default now()         |
 
 ---
 
-### `offers`
+### PasswordResetToken
 
-Scraping service offerings available for purchase. Each offer represents a business category
-that users can order for a specific zone. The price is determined by the target zone via the
-`pricing` table.
+Stores one-time password reset tokens sent via email.
 
-| Column | Type | Constraints | Description |
-|---|---|---|---|
-| `id` | `uuid` | PK, default `gen_random_uuid()` | Offer ID |
-| `title` | `text` | NOT NULL | Display title (e.g. `"Restaurants"`) |
-| `category` | `text` | NOT NULL, UNIQUE | Scraping category slug (e.g. `restaurants`) |
-| `description` | `text` | | Markdown description shown to buyers |
-| `is_active` | `boolean` | NOT NULL, default false | Visible to buyers only when true |
-| `created_at` | `timestamptz` | NOT NULL, default `now()` | Creation timestamp |
-| `updated_at` | `timestamptz` | NOT NULL, default `now()` | Last update timestamp |
-
-**Indexes**: `is_active`, `category`
+| Column    | Type      | Constraints           |
+|-----------|-----------|-----------------------|
+| id        | UUID      | PK, default uuid()    |
+| token     | String    | UNIQUE, NOT NULL      |
+| userId    | String    | FK → User(id) CASCADE |
+| expiresAt | DateTime  | NOT NULL              |
+| usedAt    | DateTime? | nullable (set on use) |
+| createdAt | DateTime  | default now()         |
 
 ---
 
-### `pricing`
+## Prisma Schema Location
 
-Zone-based pricing configuration. Defines the price (in USD) for a scraping order targeting
-a specific province or city. Managed by the admin via `PUT /admin/pricing`.
+`prisma/schema.prisma`
 
-| Column | Type | Constraints | Description |
-|---|---|---|---|
-| `id` | `uuid` | PK, default `gen_random_uuid()` | Pricing entry ID |
-| `zone` | `text` | NOT NULL, UNIQUE | Province or city name (e.g. `CABA`, `Buenos Aires`) |
-| `price_usd` | `numeric(10,2)` | NOT NULL | Price per order for this zone |
-| `created_at` | `timestamptz` | NOT NULL, default `now()` | Creation timestamp |
-| `updated_at` | `timestamptz` | NOT NULL, default `now()` | Last update timestamp |
+## Migration
 
-**Indexes**: `zone`
-
----
-
-### `users`
-
-Registered buyers.
-
-| Column | Type | Constraints | Description |
-|---|---|---|---|
-| `id` | `uuid` | PK, default `gen_random_uuid()` | User ID (generated by the app) |
-| `auth0_sub` | `text` | NOT NULL, UNIQUE | Auth0 subject identifier (e.g. `auth0|64abc...`) |
-| `email` | `text` | NOT NULL, UNIQUE | User email |
-| `full_name` | `text` | | Full name |
-| `created_at` | `timestamptz` | NOT NULL, default `now()` | Registration timestamp |
-
-**Indexes**: `auth0_sub`
-
-> Auth is managed by **Auth0**. The `users` table stores application-level data.
-> `auth0_sub` maps the Auth0 identity to the local record. It is synced automatically on the first authenticated request.
-
----
-
-### `orders`
-
-On-demand scraping purchase records. Each order represents a user purchasing a scraping job
-for a specific offer (category) and zone. The scraping is triggered after payment confirmation
-via the Stripe webhook, and the result is delivered by email and available for download.
-
-| Column | Type | Constraints | Description |
-|---|---|---|---|
-| `id` | `uuid` | PK, default `gen_random_uuid()` | Order ID |
-| `user_id` | `uuid` | NOT NULL, FK → `users.id` | Buyer |
-| `offer_id` | `uuid` | NOT NULL, FK → `offers.id` | Offer purchased |
-| `zone` | `text` | NOT NULL | Target geographic zone for scraping |
-| `format` | `text` | NOT NULL | Requested output format: `csv` \| `excel` \| `json` |
-| `status` | `text` | NOT NULL | `pending` \| `paid` \| `scraping` \| `completed` \| `failed` \| `refunded` |
-| `total_usd` | `numeric(10,2)` | NOT NULL | Amount charged (price snapshot at purchase time) |
-| `stripe_payment_intent_id` | `text` | UNIQUE | Stripe payment reference |
-| `scraping_job_id` | `uuid` | nullable, FK → `scraping_jobs.id` ON DELETE SET NULL | Scraping job triggered after payment |
-| `result_path` | `text` | | Storage path of the result file (set when scraping completes) |
-| `created_at` | `timestamptz` | NOT NULL, default `now()` | Order creation time |
-| `paid_at` | `timestamptz` | | Payment confirmation time |
-| `completed_at` | `timestamptz` | | When result was ready |
-
-**Indexes**: `user_id`, `status`, `scraping_job_id`
-
----
-
-## Entity Relationships
-
+```bash
+npx prisma migrate dev --name <migration-name>
+npx prisma migrate deploy   # production
 ```
-        offers ──────────────────────────────── orders
-                                                  │
-        pricing (zone → price_usd)                │
-                                               users
-scraping_jobs ◄────────────────────────────── orders
-     │
-  businesses
-```
-
----
-
-## Access Patterns
-
-| Pattern | Table | Filter |
-|---|---|---|
-| List active offers | `offers` | `is_active = true` |
-| Get offer detail | `offers` | `id = ?` |
-| Get price for a zone | `pricing` | `zone = ?` |
-| List all zone prices | `pricing` | — |
-| Get orders for a user | `orders` | `user_id = ?` |
-| Get order with job status | `orders JOIN scraping_jobs` | `orders.id = ?` |
-| Get order by Stripe intent | `orders` | `stripe_payment_intent_id = ?` |
-| List businesses by category+zone | `businesses` | `category = ? AND zone = ?` |
-| Get job triggered by order | `scraping_jobs` | `order_id = ?` |
-
----
-
-## Key Design Conventions
-
-- All primary keys use **UUID** (`gen_random_uuid()`)
-- All tables include `created_at timestamptz NOT NULL DEFAULT now()`
-- All mutable tables include `updated_at timestamptz NOT NULL DEFAULT now()` with an update trigger
-- Snake_case for all table and column names
-- Prices stored as `numeric(10,2)` — never float in financial columns
-- Status fields use `text` with application-level enum validation (not PG enums, for easier migration)
-- Foreign keys always define explicit `ON DELETE` behavior
-- Result files stored in object storage (S3/Supabase Storage); `result_path` holds the key/path

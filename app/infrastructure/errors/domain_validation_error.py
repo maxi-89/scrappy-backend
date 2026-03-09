@@ -1,2 +1,0 @@
-class DomainValidationError(Exception):
-    pass
