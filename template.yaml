@@ -6,7 +6,7 @@ Globals:
   Function:
     Timeout: 30
     MemorySize: 512
-    Runtime: nodejs20.x
+    Runtime: nodejs22.x
     Architectures:
       - x86_64
     Environment:
@@ -45,7 +45,7 @@ Resources:
       BuildMethod: esbuild
       BuildProperties:
         Minify: false
-        Target: es2020
+        Target: es2022
         Sourcemap: false
         EntryPoints:
           - src/lambda.ts
